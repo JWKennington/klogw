@@ -1,0 +1,13 @@
+name: klogw-env
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - matplotlib
+  - numpy
+  - pandas
+  - plotly
+  - 'python==3.11'
+  - scipy
