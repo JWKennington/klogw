@@ -89,7 +89,7 @@ def plot_theorist_types():
     plt.tight_layout(pad=0.5)
 
     # Show the plot
-    plt.savefig('types_of_theorists.pdf')
+    plt.savefig('types_of_theorists.png', dpi=300)
     plt.show()
 
 
@@ -170,7 +170,7 @@ def plot_broad_types():
     plt.tight_layout(pad=1)
 
     # Show plot
-    plt.savefig('types_of_physicists.pdf')
+    plt.savefig('types_of_physicists.png', dpi=300)
     plt.show()
 
 
@@ -257,15 +257,15 @@ def plot_rigor():
     plt.tight_layout(pad=1)
 
     # Show plot
-    plt.savefig('stages_of_rigor.pdf')
+    plt.savefig('stages_of_rigor.png', dpi=300)
     plt.show()
 
 
 
 def main():
     """Main function"""
-    # plot_broad_types()
-    # plot_theorist_types()
+    plot_broad_types()
+    plot_theorist_types()
     plot_rigor()
 
 
