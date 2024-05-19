@@ -93,10 +93,10 @@ def plot_magic_cube_static():
     ax.plot([0, 0], [1, 1], [0, 1], color='black')
     ax.plot([1, 1], [1, 1], [0, 1], color='black')
     ax.plot([1, 0], [1, 1], [1, 1], color='black')
-    ax.plot([1, 1], [0, 1], [1, 1], color='black')
-    ax.plot([1, 1], [0, 0], [0, 1], color='black')
+    ax.plot([1, 1], [0, 1], [1, 1], color='grey')
+    ax.plot([1, 1], [0, 0], [0, 1], color='grey')
     ax.plot([0, 0], [0, 1], [1, 1], color='black')
-    ax.plot([1, 0], [0, 0], [1, 1], color='black')
+    ax.plot([1, 0], [0, 0], [1, 1], color='greym')
 
     # Redraw the vertices to match colors of text
     weight = 3
