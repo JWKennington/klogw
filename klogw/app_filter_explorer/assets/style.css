@@ -1,0 +1,53 @@
+/* Import Lato font from Google */
+@import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap');
+
+/* Global font and background */
+body {
+    font-family: 'Lato', sans-serif;
+    background-color: #ffffff;
+    color: #212529;
+    margin: 0;
+}
+
+/* Override Bootstrap primary color to LIGO purple */
+:root {
+    --bs-primary: #593196;
+    --bs-primary-rgb: 89, 49, 150;
+}
+
+/* Header brand text (if needed to adjust color or size) */
+.navbar-brand {
+    font-weight: 700;
+    color: #343a40 !important;
+}
+
+/* Footer styling */
+.footer {
+    text-align: center;
+    padding: 0.5rem;
+    border-top: 1px solid #eaeaea;
+    font-size: 0.9em;
+    color: #666;
+    background-color: #f8f9fa;
+}
+
+/* Ensure dropdown menus appear above other content and are scrollable if too tall */
+div._dash-dropdown, .dropdown-menu {
+    z-index: 2000;
+}
+.select-dropdown {
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+/* Media query: always show controls collapse on wider screens */
+@media (min-width: 768px) {
+    #controls-collapse.collapse {
+        display: block !important;
+        visibility: visible !important;
+        height: auto !important;
+    }
+    #controls-toggle-btn {
+        display: none !important;
+    }
+}
