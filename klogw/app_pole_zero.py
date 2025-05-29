@@ -16,6 +16,18 @@ def design_filter(filter_family, filter_type, order, cutoff1, cutoff2=None,
     else:
         Wn = cutoff1 if filter_type in ['lowpass', 'highpass'] else [cutoff1, cutoff2]
 
+    # Ensure band edges are in ascending order if bandpass/bandstop
+    if isinstance(Wn, list) and Wn[0] > Wn[1]:
+        Wn[0], Wn[1] = Wn[1], Wn[0]
+
+    # For digital, must be 0 < Wn < 1
+    if not analog:
+        # clamp to (0,1)
+        if isinstance(Wn, list):
+            Wn = [max(1e-6, min(0.999999, w)) for w in Wn]
+        else:
+            Wn = max(1e-6, min(0.999999, Wn))
+
     if filter_family == 'Butterworth':
         z, p, k = signal.butter(order, Wn, btype=filter_type, analog=analog, output='zpk')
     elif filter_family == 'Chebyshev I':
@@ -28,7 +40,6 @@ def design_filter(filter_family, filter_type, order, cutoff1, cutoff2=None,
         if analog:
             z, p, k = signal.bessel(order, Wn, btype=filter_type, analog=True, output='zpk')
         else:
-            # design analog bessel then bilinear transform
             z_a, p_a, k_a = signal.bessel(order, cutoff1, btype=filter_type, analog=True, output='zpk')
             z, p, k = signal.bilinear_zpk(z_a, p_a, k_a, fs=2.0)
     else:
@@ -80,6 +91,48 @@ def compute_frequency_response(z, p, k, analog=True):
     return freq_axis, mag, phase_deg
 
 
+def compute_impulse_response(z, p, k, analog=True, n_points=50):
+    """
+    Compute an impulse response for either analog (continuous) or digital (discrete) filters.
+    Returns (t, h).
+    - If analog=True, we use signal.lti and signal.impulse over a chosen time range.
+    - If digital, we use signal.dlti and signal.dimpulse for n_points samples.
+    """
+    # Convert from z/p/k to b/a
+    b, a = signal.zpk2tf(z, p, k)
+
+    if analog:
+        # Build continuous-time system
+        sys_analog = signal.lti(b, a)
+        # Choose a time range (simple heuristic: 0..something)
+        # A more advanced approach might guess from real parts of p.
+        tmax = 5.0
+        # If we have negative real parts that are large, we might expand or shrink:
+        if len(p) > 0:
+            reals = [pp.real for pp in p if pp.real < 0]
+            if reals:
+                # average time constant
+                tau = -1.0 / min(reals)  # e.g. if reals = [-2, -4], min(reals)=-4 => tau=0.25
+                tmax = 5.0 * tau if tau>0 else 5.0
+                if tmax < 0.5:
+                    tmax = 0.5
+        t = np.linspace(0, tmax, 500)
+        tout, h = signal.impulse(sys_analog, T=t)
+        return tout, h
+    else:
+        # Build discrete-time system
+        sys_digital = signal.dlti(b, a)
+        # impulse for n_points steps
+        # signal.dimpulse returns a tuple (t, h)
+        # t is array of sample indices (0..n_points-1)
+        # h is a tuple of responses (for MIMO systems), so we pick h[0].
+        tout, h = signal.dimpulse(sys_digital, n=n_points)
+        # 'h' is a list of arrays if SISO => h[0] is the actual impulse response
+        h0 = np.array(h[0]).flatten()
+        t0 = np.array(tout)
+        return t0, h0
+
+
 def format_transfer_function(z, p, k, analog=True):
     """
     Format the filter's transfer function in a LaTeX-like string plus a summary of zeros/poles/gain.
@@ -92,51 +145,42 @@ def format_transfer_function(z, p, k, analog=True):
     den_poly = np.atleast_1d(den_poly)
 
     def poly_to_string(coeffs, var='s'):
-        """Convert polynomial coefficients into a string, e.g. '1.00 s^2 + 0.5 s + 0.25'.
-           Skip near-zero coefficients. For truly complex coeffs, just show '(x + yj)' without sign logic.
-        """
+        """Convert polynomial coefficients into a string, skipping near-zero and
+           handling complex if needed."""
         coeffs = np.atleast_1d(coeffs)
         N = len(coeffs)
         terms = []
 
         for i, c in enumerate(coeffs):
-            # Attempt to force near-real if imaginary part is tiny
             c = np.real_if_close(c, tol=1e-12)
             if isinstance(c, np.ndarray):
-                # real_if_close might produce a 0D array
                 c = c.item()
-
-            # if it's effectively zero, skip
             if abs(c) < 1e-12:
                 continue
 
             power = N - i - 1
 
-            # If c is still complex with non-negligible imaginary part, handle separately
             if isinstance(c, complex) and abs(c.imag) >= 1e-12:
-                # We'll just do something like (x+/-yj) with no sign logic
-                c_str = f"({c.real:.4g}{'+' if c.imag >=0 else '−'}{abs(c.imag):.4g}j)"
-                term = _format_term(c_str, power, var)
-                # For the sign, let's just treat it as + unless it's the first term
-                # We'll unify all terms with explicit +/− if you prefer, but let's do simpler:
+                # handle complex explicitly
+                re = c.real
+                im = c.imag
+                sign_im = '+' if im >= 0 else '−'
+                c_str = f"({re:.4g}{sign_im}{abs(im):.4g}j)"
                 if i == 0:
-                    term_str = term  # no leading sign for first
+                    term_str = _format_term(c_str, power, var)
                 else:
-                    term_str = f" + {term}"
+                    term_str = " + " + _format_term(c_str, power, var)
             else:
-                # Now c should be real or near-real
                 c_val = float(c)
                 sign = '+' if c_val >= 0 else '−'
                 c_abs_str = f"{abs(c_val):.4g}"
-                term = _format_term(c_abs_str, power, var)
                 if i == 0:
-                    # first term
                     if c_val < 0:
-                        term_str = f"−{term}"
+                        term_str = f"−{_format_term(c_abs_str, power, var)}"
                     else:
-                        term_str = term
+                        term_str = _format_term(c_abs_str, power, var)
                 else:
-                    term_str = f" {sign} {term}"
+                    term_str = f" {sign} {_format_term(c_abs_str, power, var)}"
 
             terms.append(term_str)
 
@@ -144,26 +188,22 @@ def format_transfer_function(z, p, k, analog=True):
             return "0"
         return "".join(terms)
 
-    def _format_term(coeff_str, power, var):
-        """Helper to attach s^power or z^power."""
+    def _format_term(c_str, power, var):
         if power == 0:
-            return coeff_str
+            return c_str
         elif power == 1:
-            return f"{coeff_str}{var}"
+            return f"{c_str}{var}"
         else:
-            return f"{coeff_str}{var}^{power}"
+            return f"{c_str}{var}^{power}"
 
     var = 's' if analog else 'z'
     num_str = poly_to_string(num_poly, var=var)
     den_str = poly_to_string(den_poly, var=var)
     tf_latex = f"H({var}) = \\frac{{{num_str}}}{{{den_str}}}"
 
-    # Build the text details for zeros/poles
     z_array = np.atleast_1d(z)
     p_array = np.atleast_1d(p)
-
     def format_complex_val(c):
-        # If near-real, show as real, else show real±imag
         c = np.real_if_close(c, tol=1e-12)
         if isinstance(c, np.ndarray):
             c = c.item()
@@ -173,7 +213,6 @@ def format_transfer_function(z, p, k, analog=True):
             sign_im = '+' if im >= 0 else '−'
             return f"{re:.3f}{sign_im}{abs(im):.3f}j"
         else:
-            # treat as float
             return f"{float(c):.3f}"
 
     if len(z_array) == 0:
@@ -191,7 +230,7 @@ def format_transfer_function(z, p, k, analog=True):
 
 
 app.layout = html.Div([
-    html.H1("Unified-Callback Signal Processing App"),
+    html.H1("Unified-Callback Signal Processing App (with Impulse Response)"),
     html.Div([
         html.Label("Filter Family:"),
         dcc.Dropdown(
@@ -264,11 +303,15 @@ app.layout = html.Div([
         dcc.Graph(
             id='pz-plot',
             config={'editable': True, 'edits': {'shapePosition': True}},
-            style={'width': '45%', 'display':'inline-block', 'height':'400px'}
+            style={'width': '31%', 'display':'inline-block', 'height':'400px'}
         ),
         dcc.Graph(
             id='bode-plot',
-            style={'width': '50%', 'display':'inline-block', 'height':'400px'}
+            style={'width': '31%', 'display':'inline-block', 'height':'400px'}
+        ),
+        dcc.Graph(
+            id='impulse-plot',
+            style={'width': '31%', 'display':'inline-block', 'height':'400px'}
         )
     ]),
 
@@ -281,6 +324,7 @@ app.layout = html.Div([
     dcc.Store(id='zpk-store')
 ])
 
+
 @callback(
     Output('band-edge-inputs', 'style'),
     Output('cutoff-note', 'children'),
@@ -291,6 +335,7 @@ def show_band_edges(filter_type):
         return {'display':'block', 'margin-bottom':'10px'}, "Enter low and high cutoff frequencies."
     else:
         return {'display':'none'}, "Enter cutoff frequency."
+
 
 @callback(
     Output('zpk-store', 'data'),
@@ -318,7 +363,7 @@ def unified_zpk_store_update(
     relayoutData,
     zpk_data
 ):
-    """Single callback that updates the stored poles and zeros whenever
+    """Single callback that updates the stored poles/zeros whenever
        filter parameters change, or user manipulates them directly."""
     ctx = dash.callback_context
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
@@ -327,8 +372,8 @@ def unified_zpk_store_update(
         zpk_data = {'zeros': [], 'poles': [], 'gain': 1.0, 'analog': True}
 
     analog = (analog_dig == 'analog')
-    z_list = zpk_data['zeros']
-    p_list = zpk_data['poles']
+    z_list = list(zpk_data['zeros'])
+    p_list = list(zpk_data['poles'])
     k = zpk_data['gain']
 
     # If a filter parameter changed, re-design from scratch
@@ -337,14 +382,14 @@ def unified_zpk_store_update(
         'cutoff1', 'cutoff2', 'ripple1', 'ripple2'
     ]
     if triggered_id in filter_param_ids:
-        if filt_type in ["bandpass", "bandstop"] and c2 < c1:
-            c1, c2 = c2, c1
+        if c1 is None:
+            c1 = 1.0
+        if (c2 is None) and (filt_type in ['bandpass','bandstop']):
+            c2 = 2.0
 
-        if not analog:  # digital mode
-            # clamp or validate c1, c2
-            c1 = max(1e-6, min(c1, 0.999999))
-            if c2 is not None:
-                c2 = max(1e-6, min(c2, 0.999999))
+        # swap if needed
+        if filt_type in ['bandpass','bandstop'] and c2 < c1:
+            c1, c2 = c2, c1
 
         z, p, k_new = design_filter(
             filter_family=filt_fam, filter_type=filt_type, order=order,
@@ -374,10 +419,10 @@ def unified_zpk_store_update(
         if z_list:
             z_list.pop()
 
-    # Dragging shapes
+    # Draggable shapes
     if triggered_id == 'pz-plot' and relayoutData:
-        new_z = list(z_list)
-        new_p = list(p_list)
+        new_z = z_list.copy()
+        new_p = p_list.copy()
         num_zeros = len(z_list)
 
         for key, val in relayoutData.items():
@@ -425,12 +470,13 @@ def unified_zpk_store_update(
 @callback(
     Output('pz-plot', 'figure'),
     Output('bode-plot', 'figure'),
+    Output('impulse-plot', 'figure'),
     Output('tf-latex', 'children'),
     Output('tf-numeric', 'children'),
     Input('zpk-store', 'data')
 )
 def update_visuals(zpk_data):
-    """Rebuild the pole-zero and Bode plots plus TF text from zpk_store."""
+    """Rebuild the pole-zero, Bode, and Impulse plots plus TF text from zpk_store."""
     if not zpk_data:
         raise exceptions.PreventUpdate
 
@@ -442,6 +488,7 @@ def update_visuals(zpk_data):
     z = np.array([complex(x, y) for x,y in z_list])
     p = np.array([complex(x, y) for x,y in p_list])
 
+    # 1) Bode
     freq_axis, mag, phase_deg = compute_frequency_response(z, p, k, analog=analog)
     bode_fig = {
         'data': [
@@ -477,15 +524,16 @@ def update_visuals(zpk_data):
         }
     }
 
-    # Pole-Zero Plot
+    # 2) Pole-Zero Plot
     shapes = []
-    # boundary
     if analog:
+        # vertical line for stability boundary
         shapes.append({
             'type': 'line', 'x0':0, 'x1':0, 'y0':-10, 'y1':10,
             'line': {'color':'black', 'width':1, 'dash':'dash'}
         })
     else:
+        # unit circle
         shapes.append({
             'type': 'circle', 'xref':'x','yref':'y',
             'x0':-1,'y0':-1,'x1':1,'y1':1,
@@ -538,11 +586,44 @@ def update_visuals(zpk_data):
     }
     pz_fig = {'data': [], 'layout': pz_layout}
 
+    # 3) Impulse Response
+    t_imp, h_imp = compute_impulse_response(z, p, k, analog=analog, n_points=50)
+    if analog:
+        # continuous time => line
+        impulse_data = [{
+            'x': t_imp,
+            'y': h_imp,
+            'mode': 'lines',
+            'name': 'Impulse Response (analog)',
+            'line': {'color': 'green'}
+        }]
+        impulse_layout = {
+            'title': 'Impulse Response (Analog)',
+            'xaxis': {'title': 'Time (s)'},
+            'yaxis': {'title': 'Amplitude'}
+        }
+    else:
+        # discrete time => stem-like
+        # Easiest is a scatter with mode='markers' or mode='lines+markers'
+        impulse_data = [{
+            'x': t_imp,
+            'y': h_imp,
+            'mode': 'markers',
+            'marker': {'color': 'green', 'symbol': 'circle', 'size': 6},
+            'name': 'Impulse Response (digital)'
+        }]
+        impulse_layout = {
+            'title': 'Impulse Response (Digital)',
+            'xaxis': {'title': 'Sample n'},
+            'yaxis': {'title': 'h[n]'}
+        }
+    impulse_fig = {'data': impulse_data, 'layout': impulse_layout}
+
     # Transfer Function
     tf_latex, details = format_transfer_function(z, p, k, analog=analog)
     latex_expr = f"$$ {tf_latex} $$"
 
-    return pz_fig, bode_fig, latex_expr, details
+    return pz_fig, bode_fig, impulse_fig, latex_expr, details
 
 
 if __name__ == '__main__':
