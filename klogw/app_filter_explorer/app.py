@@ -5,7 +5,7 @@ import dash_bootstrap_components as dbc
 from scipy import signal
 
 ##################################################
-# Constants
+# Constants & Defaults
 ##################################################
 
 LIGO_PURPLE = "#593196"
@@ -38,7 +38,7 @@ DOMAIN_OPTIONS = [
 ]
 
 ##################################################
-# Initialize the App
+# Initialize the App with a Light Theme
 ##################################################
 
 app = dash.Dash(
@@ -46,9 +46,9 @@ app = dash.Dash(
     external_stylesheets=[dbc.themes.FLATLY],
     meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
 )
-app.title = "Signal Filter Visualizer (LIGO)"
+app.title = "Signal Filter Visualization (LIGO)"
 
-# Inline index_string with Lato font, big row on desktops, etc.
+# Inline CSS for layout, Lato font, etc.
 app.index_string = r"""
 <!DOCTYPE html>
 <html>
@@ -72,18 +72,17 @@ app.index_string = r"""
       background: #f8f9fa;
       color: #666;
     }
-    /* On large screens, the .main-content-row tries to fill leftover space with no scrolling */
+    /* On large screens, force main row to fill leftover vertical space with no scrolling. */
     @media (min-width: 992px) {
         .main-content-row {
-            height: calc(100vh - 210px) !important; /* adjust offset for your header/controls */
+            height: calc(100vh - 210px) !important; 
             overflow: hidden;
         }
     }
-    /* left & right col each fill 100% height of that row */
     #left-col, #right-col {
         height: 100%;
     }
-    /* in the right col, we have a container of 2 half-height graphs stacked */
+    /* right col => 2 stacked plots (each 50%) */
     #right-col > div {
         width: 100%;
         height: 100%;
@@ -96,7 +95,7 @@ app.index_string = r"""
     #right-col > div > div:last-child {
         height: 50%;
     }
-    /* On md+ screens, we always show the controls row & hide the toggle. */
+    /* On md+ screens => always show controls row, hide toggle button. */
     @media (min-width: 768px) {
       #controls-collapse.collapse {
         display: block !important;
@@ -107,7 +106,7 @@ app.index_string = r"""
         display: none !important;
       }
     }
-    /* dropdown menu overflow fix */
+    /* dropdown menu fix => scroll if many items, z-index on top */
     .dropdown-menu {
       max-height: 250px;
       overflow-y: auto;
@@ -119,7 +118,7 @@ app.index_string = r"""
 <body>
     {%app_entry%}
     <footer class="footer">
-      © Jim Kennington 2025
+        © Jim Kennington 2025
     </footer>
     {%config%}
     {%scripts%}
@@ -129,7 +128,7 @@ app.index_string = r"""
 """
 
 ##################################################
-# Navbar / Header
+# Layout: Header, Controls, Graphs
 ##################################################
 
 header = dbc.Navbar(
@@ -140,16 +139,12 @@ header = dbc.Navbar(
                 dbc.Col(dbc.NavbarBrand("Interactive Filter Visualization", className="ms-2"))
             ], align="center", className="g-0"),
             href="#", style={"textDecoration": "none"}
-        ),
+        )
     ]),
     color="white",
     dark=False,
     className="mb-0"
 )
-
-##################################################
-# Filter Controls & Mobile Toggle
-##################################################
 
 domain_radio = dbc.RadioItems(
     id="domain-radio",
@@ -160,30 +155,11 @@ domain_radio = dbc.RadioItems(
     options=DOMAIN_OPTIONS,
     value=DEFAULT_DOMAIN
 )
-domain_radio_group = html.Div(domain_radio, className="btn-group me-2", **{"role": "group"})
+domain_radio_group = html.Div(domain_radio, className="btn-group me-2", **{"role":"group"})
 
-family_dd = dcc.Dropdown(
-    id="family-dropdown",
-    options=FILTER_FAMILIES,
-    value=DEFAULT_FAMILY,
-    clearable=False,
-    style={"minWidth": "120px"}
-)
-type_dd = dcc.Dropdown(
-    id="type-dropdown",
-    options=FILTER_TYPES,
-    value=DEFAULT_TYPE,
-    clearable=False,
-    style={"minWidth": "100px"}
-)
-order_input = dbc.Input(
-    id="order-input",
-    type="number",
-    value=DEFAULT_ORDER,
-    min=1,
-    step=1,
-    style={"width":"5ch"}
-)
+family_dd = dcc.Dropdown(id="family-dropdown", options=FILTER_FAMILIES, value=DEFAULT_FAMILY, clearable=False, style={"minWidth":"120px"})
+type_dd = dcc.Dropdown(id="type-dropdown", options=FILTER_TYPES, value=DEFAULT_TYPE, clearable=False, style={"minWidth":"100px"})
+order_in = dbc.Input(id="order-input", type="number", value=DEFAULT_ORDER, min=1, step=1, style={"width":"5ch"})
 
 cut1_label = dbc.InputGroupText(id="cutoff1-label", children="Cutoff 1")
 cut1_in = dbc.Input(id="cutoff1-input", type="number", value=DEFAULT_CUTOFF1, step=0.1, style={"width":"6ch"})
@@ -197,7 +173,7 @@ controls_row = dbc.Row([
     dbc.Col(domain_radio_group, width="auto"),
     dbc.Col(family_dd, width="auto"),
     dbc.Col(type_dd, width="auto"),
-    dbc.Col(order_input, width="auto"),
+    dbc.Col(order_in, width="auto"),
     dbc.Col(cut1_grp, width="auto"),
     dbc.Col(cut2_grp, width="auto"),
 ], align="center", className="g-2 flex-wrap")
@@ -205,49 +181,29 @@ controls_row = dbc.Row([
 controls_collapse = dbc.Collapse(controls_row, id="controls-collapse", is_open=False)
 toggle_btn = dbc.Button("Filter Controls", id="controls-toggle-btn", color="secondary", className="d-md-none mb-2")
 
-##################################################
-# Pole-Zero Buttons
-##################################################
-
 pz_buttons = html.Div([
     dbc.Button("Add Pole", id="add-pole-btn", color="primary", outline=True, size="sm", className="me-2"),
     dbc.Button("Add Zero", id="add-zero-btn", color="primary", outline=True, size="sm", className="me-2"),
     dbc.Button("Clear", id="clear-btn", color="secondary", size="sm"),
 ], className="mb-2")
 
-##################################################
-# Graphs
-##################################################
-
 pz_graph = dcc.Graph(
     id="pz-plot",
     style={"width":"100%", "height":"100%"},
-    config={
-        "editable": True,
-        "edits": {"shapePosition": True},
-        "displayModeBar": False
-    },
+    config={"editable": True, "edits": {"shapePosition":True}, "displayModeBar":False}
 )
 bode_graph = dcc.Graph(
-    id="bode-plot",
-    style={"width":"100%", "height":"50%"},
-    config={"displayModeBar":False},
+    id="bode-plot", style={"width":"100%", "height":"50%"}, config={"displayModeBar":False}
 )
 impulse_graph = dcc.Graph(
-    id="impulse-plot",
-    style={"width":"100%", "height":"50%"},
-    config={"displayModeBar":False}
+    id="impulse-plot", style={"width":"100%", "height":"50%"}, config={"displayModeBar":False}
 )
-
-##################################################
-# App Layout
-##################################################
 
 app.layout = html.Div([
     header,
     dbc.Container([
         toggle_btn,
-        controls_collapse,
+        controls_collapse
     ], fluid=True, className="mt-2"),
 
     dbc.Row([
@@ -255,14 +211,14 @@ app.layout = html.Div([
             html.Div([
                 pz_graph,
                 pz_buttons
-            ], style={"width":"100%","height":"100%","display":"flex","flexDirection":"column"}),
+            ], style={"width":"100%", "height":"100%", "display":"flex", "flexDirection":"column"}),
             md=6, style={"height":"100%"}, id="left-col"
         ),
         dbc.Col(
             html.Div([
                 bode_graph,
                 impulse_graph
-            ], style={"width":"100%","height":"100%","display":"flex","flexDirection":"column"}),
+            ], style={"width":"100%", "height":"100%", "display":"flex", "flexDirection":"column"}),
             md=6, style={"height":"100%"}, id="right-col"
         )
     ], className="gx-0 main-content-row flex-nowrap", style={"margin":0}),
@@ -271,8 +227,9 @@ app.layout = html.Div([
 ], style={"display":"flex","flexDirection":"column","minHeight":"100vh"})
 
 ##################################################
-# Mobile Toggle Controls
+# Callbacks
 ##################################################
+
 @app.callback(
     Output("controls-collapse","is_open"),
     Input("controls-toggle-btn","n_clicks"),
@@ -283,9 +240,6 @@ def toggle_controls(n_clicks, is_open):
         return not is_open
     return is_open
 
-##################################################
-# Show/Hide Second Cutoff & Label
-##################################################
 @app.callback(
     Output("cutoff2-group","style"),
     Output("cutoff1-label","children"),
@@ -293,13 +247,13 @@ def toggle_controls(n_clicks, is_open):
     Input("type-dropdown","value"),
     Input("domain-radio","value")
 )
-def toggle_cut2_labels(ftype, domain):
+def toggle_cutoff2(ftype, domain):
     if ftype in ["bandpass","bandstop"]:
-        st = {}
+        s2 = {}
         c1 = "Low Cutoff"
         c2 = "High Cutoff"
     else:
-        st = {"display":"none"}
+        s2 = {"display":"none"}
         c1 = "Cutoff Freq"
         c2 = "Cutoff 2"
     if domain=="analog":
@@ -308,11 +262,8 @@ def toggle_cut2_labels(ftype, domain):
     else:
         c1 += " (norm.)"
         c2 += " (norm.)"
-    return st, c1, c2
+    return s2, c1, c2
 
-##################################################
-# Filter Design Helper
-##################################################
 def design_filter(family, btype, order, domain, c1, c2=None):
     analog = (domain=="analog")
     if btype in ["bandpass","bandstop"]:
@@ -323,7 +274,7 @@ def design_filter(family, btype, order, domain, c1, c2=None):
         else:
             if lo<=0: lo=1e-6
             if hi>=1: hi=0.999999
-        Wn=[lo, hi]
+        Wn=[lo,hi]
     else:
         Wn=c1
         if analog:
@@ -331,7 +282,6 @@ def design_filter(family, btype, order, domain, c1, c2=None):
         else:
             if Wn>=1: Wn=0.999999
             if Wn<=0: Wn=1e-6
-
     try:
         if family=="Butterworth":
             z,p,k=signal.butter(order, Wn, btype=btype, analog=analog, output='zpk')
@@ -347,14 +297,10 @@ def design_filter(family, btype, order, domain, c1, c2=None):
             z=np.array([]); p=np.array([]); k=1.0
     except:
         z=np.array([]); p=np.array([]); k=1.0
-
     zeros=[[float(zr.real), float(zr.imag)] for zr in z]
     poles=[[float(pr.real), float(pr.imag)] for pr in p]
     return zeros, poles, float(k)
 
-##################################################
-# Update pz-store Callback
-##################################################
 @app.callback(
     Output("pz-store","data"),
     Input("family-dropdown","value"),
@@ -368,28 +314,26 @@ def design_filter(family, btype, order, domain, c1, c2=None):
     Input("clear-btn","n_clicks"),
     State("pz-store","data")
 )
-def update_pzstore(family, ftype, order, domain, c1, c2,
-                   addp, addz, clear_btn,
-                   store_data):
+def update_store(family, ftype, order, domain, c1, c2,
+                 addp, addz, clearbtn, store_data):
     ctx = callback_context
     trig_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
 
-    old_poles = [complex(p[0],p[1]) for p in store_data["poles"]]
-    old_zeros = [complex(z[0],z[1]) for z in store_data["zeros"]]
+    old_poles = [complex(p[0], p[1]) for p in store_data["poles"]]
+    old_zeros = [complex(z[0], z[1]) for z in store_data["zeros"]]
     old_gain = store_data["gain"]
 
+    # If user changed any filter param => redesign if not custom
     if trig_id in ["family-dropdown","type-dropdown","order-input","domain-radio","cutoff1-input","cutoff2-input"]:
         if family!="Custom":
-            zz, pp, kk = design_filter(family, ftype, order, domain, c1, c2)
-            old_zeros=[complex(zv[0],zv[1]) for zv in zz]
-            old_poles=[complex(pv[0],pv[1]) for pv in pp]
+            zz, pp, kk=design_filter(family, ftype, order, domain, c1, c2)
+            old_zeros=[complex(zv[0], zv[1]) for zv in zz]
+            old_poles=[complex(pv[0], pv[1]) for pv in pp]
             old_gain=kk
         else:
-            # if domain changed while custom, reset
+            # if domain changed in custom => reset
             if trig_id=="domain-radio":
-                old_zeros=[]
-                old_poles=[]
-                old_gain=1.0
+                old_zeros=[]; old_poles=[]; old_gain=1.0
 
     if trig_id=="add-pole-btn":
         if domain=="analog":
@@ -418,22 +362,18 @@ def update_pzstore(family, ftype, order, domain, c1, c2,
 
     if trig_id=="clear-btn":
         if family!="Custom":
-            zz,pp,kk=design_filter(family, ftype, order, domain, c1, c2)
-            old_zeros=[complex(zv[0],zv[1]) for zv in zz]
-            old_poles=[complex(pv[0],pv[1]) for pv in pp]
+            zz, pp, kk=design_filter(family, ftype, order, domain, c1, c2)
+            old_zeros=[complex(zv[0], zv[1]) for zv in zz]
+            old_poles=[complex(pv[0], pv[1]) for pv in pp]
             old_gain=kk
         else:
-            old_zeros=[]
-            old_poles=[]
-            old_gain=1.0
+            old_zeros=[]; old_poles=[]; old_gain=1.0
 
     new_poles=[[p.real,p.imag] for p in old_poles]
     new_zeros=[[z.real,z.imag] for z in old_zeros]
     return {"poles":new_poles, "zeros":new_zeros, "gain":old_gain}
 
-##################################################
-# Main Plot Callback
-##################################################
+
 @app.callback(
     Output("pz-plot","figure"),
     Output("bode-plot","figure"),
@@ -449,47 +389,47 @@ def update_pzstore(family, ftype, order, domain, c1, c2,
 )
 def update_plots(store_data, relayoutData,
                  family, ftype, order, domain, c1, c2):
-    """Generates pole-zero figure (with shape-based drag), Bode plot, and impulse response."""
-    # 1) Convert store data
+    """Build the updated PZ, Bode, and Impulse plots after shape drags or filter changes."""
+    # Convert store data
     poles_c = [complex(p[0],p[1]) for p in store_data["poles"]]
     zeros_c = [complex(z[0],z[1]) for z in store_data["zeros"]]
     gain = store_data["gain"]
 
-    # 2) If user dragged shapes => interpret relayoutData
+    # shape-based drag parse
     num_zeros = len(zeros_c)
     num_poles = len(poles_c)
-
     if relayoutData and isinstance(relayoutData, dict):
         for key, val in relayoutData.items():
             if key.startswith("shapes["):
-                shape_idx = int(key.split("[")[1].split("]")[0])
+                sidx = int(key.split("[")[1].split("]")[0])
                 attr = key.split(".")[-1]
-                # shape[0] => stable region => ignore
-                if shape_idx==0:
+                if sidx==0:
+                    # stability shape => ignore
                     continue
-                # zeros => shapes 1..num_zeros
-                if 1<=shape_idx<=num_zeros:
-                    zidx=shape_idx-1
+                if 1<=sidx<=num_zeros:
+                    # zero
+                    zidx=sidx-1
                     if attr in ["x0","y0"]:
-                        x0=relayoutData.get(f"shapes[{shape_idx}].x0", zeros_c[zidx].real-0.05)
-                        x1=relayoutData.get(f"shapes[{shape_idx}].x1", zeros_c[zidx].real+0.05)
-                        y0=relayoutData.get(f"shapes[{shape_idx}].y0", zeros_c[zidx].imag-0.05)
-                        y1=relayoutData.get(f"shapes[{shape_idx}].y1", zeros_c[zidx].imag+0.05)
+                        x0=relayoutData.get(f"shapes[{sidx}].x0", zeros_c[zidx].real-0.05)
+                        x1=relayoutData.get(f"shapes[{sidx}].x1", zeros_c[zidx].real+0.05)
+                        y0=relayoutData.get(f"shapes[{sidx}].y0", zeros_c[zidx].imag-0.05)
+                        y1=relayoutData.get(f"shapes[{sidx}].y1", zeros_c[zidx].imag+0.05)
                         newx=(x0+x1)/2.
                         newy=(y0+y1)/2.
+                        # Snap
                         snap=0.1
                         newx=round(newx/snap)*snap
                         newy=round(newy/snap)*snap
                         zeros_c[zidx]=complex(newx,newy)
                 else:
-                    # poles => each pole has 2 shapes
-                    idx_pole_shape = shape_idx - (num_zeros+1)
-                    pole_idx = idx_pole_shape//2
+                    # pole => 2 shapes
+                    idx_pole_shape = sidx-(num_zeros+1)
+                    pole_idx=idx_pole_shape//2
                     if attr in ["x0","y0"]:
-                        x0=relayoutData.get(f"shapes[{shape_idx}].x0", poles_c[pole_idx].real-0.07)
-                        x1=relayoutData.get(f"shapes[{shape_idx}].x1", poles_c[pole_idx].real+0.07)
-                        y0=relayoutData.get(f"shapes[{shape_idx}].y0", poles_c[pole_idx].imag-0.07)
-                        y1=relayoutData.get(f"shapes[{shape_idx}].y1", poles_c[pole_idx].imag+0.07)
+                        x0=relayoutData.get(f"shapes[{sidx}].x0", poles_c[pole_idx].real-0.07)
+                        x1=relayoutData.get(f"shapes[{sidx}].x1", poles_c[pole_idx].real+0.07)
+                        y0=relayoutData.get(f"shapes[{sidx}].y0", poles_c[pole_idx].imag-0.07)
+                        y1=relayoutData.get(f"shapes[{sidx}].y1", poles_c[pole_idx].imag+0.07)
                         newx=(x0+x1)/2.
                         newy=(y0+y1)/2.
                         snap=0.1
@@ -497,98 +437,199 @@ def update_plots(store_data, relayoutData,
                         newy=round(newy/snap)*snap
                         poles_c[pole_idx]=complex(newx,newy)
 
-    # 3) compute freq/impulse ...
-    #   (same as before; omitted for brevity, or you can copy your logic)
-    # For demonstration, we'll just do an empty figure for Bode/Impulse:
-    bode_fig = {
-        "data": [],
-        "layout": {"title":"Bode Plot","xaxis":{"title":"Freq"},"yaxis":{"title":"Mag(dB)"}}
-    }
-    impulse_fig= {
-        "data": [],
-        "layout": {"title":"Impulse","xaxis":{"title":"Time"},"yaxis":{"title":"Amplitude"}}
-    }
+    # Build Bode & impulse
+    def zpk_freq(zeros, poles, k, domain, ftype, c1, c2):
+        analog=(domain=="analog")
+        if analog:
+            if ftype in ["bandpass","bandstop"]:
+                lo=min(c1,c2); hi=max(c1,c2)
+                fmin=max(1e-3, 0.1*lo)
+                fmax=max(fmin*10, 10*hi)
+            else:
+                fmin=max(1e-3,0.1*c1)
+                fmax=max(fmin*10,10*c1)
+            w=np.logspace(np.log10(fmin), np.log10(fmax), 500)
+            s=1j*w
+            num=np.ones_like(s, dtype=complex)
+            den=np.ones_like(s, dtype=complex)
+            for z_ in zeros:
+                num*=(s - z_)
+            for p_ in poles:
+                den*=(s - p_)
+            H = k*num/den
+            return w,H
+        else:
+            w=np.linspace(0, np.pi, 800) # rad
+            ejw=np.exp(1j*w)
+            num=np.ones_like(ejw, dtype=complex)
+            den=np.ones_like(ejw, dtype=complex)
+            for z_ in zeros:
+                num*=(ejw - z_)
+            for p_ in poles:
+                den*=(ejw - p_)
+            H=k*num/den
+            return w,H
 
-    # 4) build PZ figure with shapes
-    fig_pz = {
-        "data": [],
-        "layout": {
-            "title": "Pole-Zero Plot",
-            "xaxis": {"title":"Real Axis"},
-            "yaxis": {"title":"Imag Axis", "scaleanchor":"x","scaleratio":1},
+    w, H = zpk_freq(zeros_c, poles_c, gain, domain, ftype, c1, c2)
+    mag = 20.*np.log10(np.abs(H)+1e-12)
+    phase = np.unwrap(np.angle(H))
+    phase_deg = phase*180./np.pi
+
+    bode_fig={
+        "data":[
+            {"x": w.tolist(),
+             "y": mag.tolist(),
+             "mode":"lines","name":"Magnitude(dB)",
+             "marker":{"color":LIGO_PURPLE},"yaxis":"y1"
+            },
+            {"x": w.tolist(),
+             "y": phase_deg.tolist(),
+             "mode":"lines","name":"Phase(deg)",
+             "marker":{"color":"#ff7f0e"},"yaxis":"y2"
+            }
+        ],
+        "layout":{
+            "title":"Frequency Response (Bode Plot)",
+            "margin":{"l":60,"r":60,"t":40,"b":50},
+            "showlegend":False,
+            "xaxis":{"title":"Frequency (rad/s)" if domain=="analog" else "Frequency (rad/sample)"},
+            "yaxis":{"title":"Magnitude (dB)"},
+            "yaxis2":{"title":"Phase (deg)","overlaying":"y","side":"right"}
+        }
+    }
+    if domain=="analog":
+        bode_fig["layout"]["xaxis"]["type"]="log"
+
+    # Impulse
+    impulse_fig={
+        "data":[],
+        "layout":{
+            "title":"Impulse Response",
+            "margin":{"l":60,"r":20,"t":40,"b":50}
+        }
+    }
+    analog=(domain=="analog")
+    if analog:
+        # approximate continuous
+        if not poles_c and not zeros_c:
+            # trivial => delta at t=0
+            t_=[0,1e-3]
+            h_=[gain, 0]
+        else:
+            neg_p=[p for p in poles_c if p.real<0]
+            if neg_p:
+                slowest=max([-1.0/p.real for p in neg_p if p.real!=0], default=1)
+            else:
+                slowest=1
+            tmax=min(slowest*5, 100)
+            t=np.linspace(0,tmax,500)
+            b,a=signal.zpk2tf(zeros_c,poles_c,gain)
+            try:
+                tout, yout = signal.impulse((b,a), T=t)
+                t_=tout; h_=yout
+            except:
+                t_=t; h_=np.zeros_like(t)
+        impulse_fig["data"].append({"x":t_,"y":h_,"mode":"lines","name":"h(t)"})
+        impulse_fig["layout"]["xaxis"]={"title":"Time (s)"}
+        impulse_fig["layout"]["yaxis"]={"title":"Amplitude"}
+    else:
+        b,a=signal.zpk2tf(zeros_c,poles_c,gain)
+        if poles_c:
+            max_mag=max(abs(p) for p in poles_c)
+        else:
+            max_mag=0
+        if max_mag<1:
+            N=100
+        else:
+            N=200
+        imp=np.zeros(N); imp[0]=1.
+        h_=signal.lfilter(b,a,imp)
+        n_=np.arange(N)
+        impulse_fig["data"].append({"x":n_.tolist(),"y":h_.tolist(),"mode":"lines","name":"h[n]"})
+        impulse_fig["layout"]["xaxis"]={"title":"Samples (n)"}
+        impulse_fig["layout"]["yaxis"]={"title":"Amplitude"}
+
+    # PZ figure
+    fig_pz={
+        "data":[],
+        "layout":{
+            "title":"Pole-Zero Plot",
+            "xaxis":{"title":"Real Axis"},
+            "yaxis":{"title":"Imag Axis","scaleanchor":"x","scaleratio":1},
             "margin":{"l":60,"r":20,"t":40,"b":50},
-            "shapes": [],
+            "shapes":[],
             "showlegend":False
         }
     }
-    # shading shape[0]
+    # shape[0] => stability region shading
     if domain=="analog":
-        shape_stable = {
+        shape_stable={
             "type":"rect","xref":"x","yref":"y",
-            "x0":-9999.,"x1":0.,"y0":-9999.,"y1":9999.,
+            "x0": -9999.,"x1": 0.,"y0": -9999.,"y1": 9999.,
             "fillcolor":"rgba(0,255,0,0.07)",
             "line":{"width":0},
             "layer":"below"
         }
     else:
-        shape_stable = {
+        shape_stable={
             "type":"circle","xref":"x","yref":"y",
-            "x0":-1.,"x1":1.,"y0":-1.,"y1":1.,
+            "x0": -1.,"x1":1.,"y0": -1.,"y1":1.,
             "fillcolor":"rgba(0,255,0,0.07)",
             "line":{"width":0},
             "layer":"below"
         }
     fig_pz["layout"]["shapes"].append(shape_stable)
 
-    # compute axis range
+    # auto range
     all_x = [z.real for z in zeros_c]+[p.real for p in poles_c]
     all_y = [z.imag for z in zeros_c]+[p.imag for p in poles_c]
     if not all_x and not all_y:
         axis_lim=1.0
     else:
-        max_val = max([1.0]+[abs(v) for v in (all_x+all_y)])
+        max_val = max([1.0]+[abs(v) for v in all_x+all_y])
         axis_lim = max_val*1.2
     fig_pz["layout"]["xaxis"]["range"]=[-axis_lim, axis_lim]
     fig_pz["layout"]["yaxis"]["range"]=[-axis_lim, axis_lim]
 
-    # zeros => shapes
+    # zeros => shape index 1..num_zeros
     idx_shape=1
     for z_ in zeros_c:
-        x_c = float(z_.real)
-        y_c = float(z_.imag)
-        shape_zero={
+        xr=float(z_.real); yr=float(z_.imag)
+        shape_z={
             "type":"circle","xref":"x","yref":"y",
-            "x0": float(x_c-0.05), "x1": float(x_c+0.05),
-            "y0": float(y_c-0.05), "y1": float(y_c+0.05),
+            "x0": xr-0.05,"x1": xr+0.05,
+            "y0": yr-0.05,"y1": yr+0.05,
             "line":{"color":"#1f77b4","width":2},
             "fillcolor":"rgba(0,0,0,0)"
         }
-        fig_pz["layout"]["shapes"].append(shape_zero)
+        fig_pz["layout"]["shapes"].append(shape_z)
         idx_shape+=1
 
     # poles => 2 shapes each
     for p_ in poles_c:
-        cx = float(p_.real)
-        cy = float(p_.imag)
+        px=float(p_.real)
+        py=float(p_.imag)
         d=0.07
-        shape_line1={
+        shape_l1={
             "type":"line","xref":"x","yref":"y",
-            "x0": float(cx-d), "x1": float(cx+d),
-            "y0": float(cy-d), "y1": float(cy+d),
+            "x0": px-d, "x1": px+d,
+            "y0": py-d, "y1": py+d,
             "line":{"color":"#d62728","width":2}
         }
-        shape_line2={
+        shape_l2={
             "type":"line","xref":"x","yref":"y",
-            "x0": float(cx-d), "x1": float(cx+d),
-            "y0": float(cy+d), "y1": float(cy-d),
+            "x0": px-d, "x1": px+d,
+            "y0": py+d, "y1": py-d,
             "line":{"color":"#d62728","width":2}
         }
-        fig_pz["layout"]["shapes"].append(shape_line1)
-        fig_pz["layout"]["shapes"].append(shape_line2)
+        fig_pz["layout"]["shapes"].append(shape_l1)
+        fig_pz["layout"]["shapes"].append(shape_l2)
         idx_shape+=2
 
     return fig_pz, bode_fig, impulse_fig
 
-
+##################################################
+# run the server
+##################################################
 if __name__=="__main__":
     app.run(debug=True)
