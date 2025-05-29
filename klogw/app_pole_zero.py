@@ -337,14 +337,18 @@ def unified_zpk_store_update(
         'cutoff1', 'cutoff2', 'ripple1', 'ripple2'
     ]
     if triggered_id in filter_param_ids:
-        low_cut = c1
-        high_cut = c2 if c2 is not None else c1
-        if filt_type in ['bandpass', 'bandstop'] and high_cut < low_cut:
-            low_cut, high_cut = high_cut, low_cut
+        if filt_type in ["bandpass", "bandstop"] and c2 < c1:
+            c1, c2 = c2, c1
+
+        if not analog:  # digital mode
+            # clamp or validate c1, c2
+            c1 = max(1e-6, min(c1, 0.999999))
+            if c2 is not None:
+                c2 = max(1e-6, min(c2, 0.999999))
 
         z, p, k_new = design_filter(
             filter_family=filt_fam, filter_type=filt_type, order=order,
-            cutoff1=low_cut, cutoff2=high_cut,
+            cutoff1=c1, cutoff2=c2,
             ripple1=rip1 or 0.1, ripple2=rip2 or 30,
             analog=analog
         )
