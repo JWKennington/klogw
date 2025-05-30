@@ -170,7 +170,7 @@ templ_norm = np.sqrt(np.sum(np.abs(filtered_signal)**2))
 snr = corr_white / (templ_norm if templ_norm>0 else 1e-12)
 
 # Build a time axis for the correlation from - (N-1) to + (N-1) samples
-lag_array = np.arange(-(N - 1), (N - 1))
+lag_array = np.arange(-(N - 1), (N - 1) + 1)
 lag_time  = lag_array * delta_t  # in seconds
 # We want the portion that corresponds to the data window (~ -4 to +4)
 # The zero-lag is near index=0 in snr array => that means t=0 is in the middle
