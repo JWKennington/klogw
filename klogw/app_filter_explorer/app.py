@@ -5,7 +5,7 @@ import dash_bootstrap_components as dbc
 from scipy import signal
 
 ##################################################
-# Constants
+# Constants & Defaults
 ##################################################
 
 LIGO_PURPLE = "#593196"
@@ -38,17 +38,17 @@ DOMAIN_OPTIONS = [
 ]
 
 ##################################################
-# Initialize the Dash App
+# Initialize App
 ##################################################
 
 app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.FLATLY],
-    meta_tags=[{"name":"viewport","content":"width=device-width,initial-scale=1"}],
+    meta_tags=[{"name":"viewport","content":"width=device-width, initial-scale=1"}],
 )
 app.title = "Signal Filter Visualization (LIGO)"
 
-# Inline CSS / layout
+# Inline CSS
 app.index_string = r"""
 <!DOCTYPE html>
 <html>
@@ -61,7 +61,7 @@ app.index_string = r"""
     <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap" rel="stylesheet">
     <style>
     body {
-      font-family:'Lato',sans-serif; margin:0; padding:0; background:#fff;
+      font-family:'Lato', sans-serif; margin:0; padding:0; background:#fff;
     }
     .footer {
       text-align:center; padding:10px; border-top:1px solid #eaeaea; background:#f8f9fa; color:#666;
@@ -72,14 +72,14 @@ app.index_string = r"""
       }
     }
     #left-col,#right-col{ height:100%; }
-    #right-col>div{ width:100%; height:100%; display:flex; flex-direction:column; }
+    #right-col>div { width:100%; height:100%; display:flex; flex-direction:column; }
     #right-col>div>div:first-child{ height:50%; }
     #right-col>div>div:last-child{  height:50%; }
     @media(min-width:768px){
       #controls-collapse.collapse{
         display:block!important; visibility:visible!important; height:auto!important;
       }
-      #controls-toggle-btn{ display:none!important; }
+      #controls-toggle-btn { display:none!important; }
     }
     .dropdown-menu{ max-height:250px; overflow-y:auto; z-index:2000; }
     </style>
@@ -96,7 +96,7 @@ app.index_string = r"""
 """
 
 ##################################################
-# Layout
+# Layout: Header, Controls, Graphs
 ##################################################
 
 header = dbc.Navbar(
@@ -146,7 +146,7 @@ toggle_btn= dbc.Button("Filter Controls", id="controls-toggle-btn", color="secon
 pz_buttons= html.Div([
     dbc.Button("Add Pole", id="add-pole-btn", color="primary", outline=True, size="sm", className="me-2"),
     dbc.Button("Add Zero", id="add-zero-btn", color="primary", outline=True, size="sm", className="me-2"),
-    dbc.Button("Clear", id="clear-btn", color="secondary", size="sm")
+    dbc.Button("Clear",    id="clear-btn",    color="secondary", size="sm"),
 ], className="mb-2")
 
 pz_graph= dcc.Graph(
@@ -182,6 +182,7 @@ app.layout= html.Div([
         )
     ], className="gx-0 main-content-row flex-nowrap", style={"margin":0}),
 
+    # Store with current poles/zeros/gain
     dcc.Store(id="pz-store", data={"poles":[],"zeros":[],"gain":1.0})
 ], style={"display":"flex","flexDirection":"column","minHeight":"100vh"})
 
@@ -212,6 +213,7 @@ def sanitize_json(obj):
     if isinstance(obj,(float,int,str,bool,type(None))):
         return obj
     return obj
+
 
 ##################################################
 # Filter design
@@ -255,6 +257,7 @@ def design_filter(family, ftype, order, domain, c1, c2):
     poles= [[float(pr.real), float(pr.imag)] for pr in p]
     return zeros, poles, float(k)
 
+
 ##################################################
 # Toggle Controls
 ##################################################
@@ -267,6 +270,7 @@ def toggle_controls(n_clicks, is_open):
     if n_clicks:
         return not is_open
     return is_open
+
 
 ##################################################
 # Show/hide second cutoff
@@ -297,7 +301,7 @@ def toggle_cut2(ftype, domain):
 
 
 ##################################################
-# Single callback
+# Single Callback
 ##################################################
 @app.callback(
     Output("pz-store","data"),
@@ -321,16 +325,17 @@ def update_all(
     addp, addz, clear_btn, relayoutData,
     store_data
 ):
+    from scipy import signal
     ctx=callback_context
     trig_id= ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
     print(f"[DEBUG] triggered by => {trig_id}")
 
     # read store
-    old_poles= [complex(p[0],p[1]) for p in store_data["poles"]]
-    old_zeros=[complex(z[0],z[1]) for z in store_data["zeros"]]
+    old_poles= [complex(pp[0],pp[1]) for pp in store_data["poles"]]
+    old_zeros=[complex(zz[0],zz[1]) for zz in store_data["zeros"]]
     old_gain= store_data["gain"]
 
-    # if user changed filter param => re-design if not custom
+    # If user changed filter param => redesign if not custom
     if trig_id in [
         "family-dropdown","type-dropdown","order-input",
         "domain-radio","cutoff1-input","cutoff2-input"
@@ -341,11 +346,10 @@ def update_all(
             old_poles= [complex(pv[0],pv[1]) for pv in plist]
             old_gain= k_new
         else:
-            # if domain changed in custom => reset
             if trig_id=="domain-radio":
                 old_zeros=[]; old_poles=[]; old_gain=1.0
 
-    # add pole
+    # Add pole
     if trig_id=="add-pole-btn":
         if domain=="analog":
             idx=len(old_poles)
@@ -356,7 +360,7 @@ def update_all(
             if val>0.9: val=0.9
             old_poles.append(complex(val,0))
 
-    # add zero
+    # Add zero
     if trig_id=="add-zero-btn":
         if domain=="analog":
             idx=len(old_zeros)
@@ -370,7 +374,7 @@ def update_all(
             else:
                 old_zeros.append(complex(0.5,0))
 
-    # clear
+    # Clear
     if trig_id=="clear-btn":
         if fam!="Custom":
             zlist, plist, k_new= design_filter(fam, ftype, order, domain, c1, c2)
@@ -380,83 +384,65 @@ def update_all(
         else:
             old_zeros=[]; old_poles=[]; old_gain=1.0
 
-    # If triggered by pz-plot or at least if relayoutData => parse the shape movement
-    if trig_id=="pz-plot":
-        if relayoutData and isinstance(relayoutData,dict):
-            # You have keys like "shapes[0].x0": val, "shapes[0].name": val, ...
-            # Let's gather them by shape index
-            shapes_by_idx= {}
-            for k,v in relayoutData.items():
-                if k.startswith("shapes["):
-                    # parse shapes[IDX].attr
-                    shape_idx_str= k.split("[")[1].split("]")[0]  # "0" or "1"
-                    shape_idx= int(shape_idx_str)
-                    attr= k.split(".")[-1]  # x0, x1, y0, y1, name, ...
-                    if shape_idx not in shapes_by_idx:
-                        shapes_by_idx[shape_idx]={}
-                    shapes_by_idx[shape_idx][attr]= v
+    # If user dragged shapes => parse them
+    # We define shape #0 => stable region (non-draggable)
+    # shape #1..1+len(zeros) => zero circles
+    # shape #(1+len(zeros)).. => pole circles
+    if relayoutData and isinstance(relayoutData, dict):
+        # parse shapes[IDX].x0, shapes[IDX].x1, y0, y1 => center
+        shapes_by_idx={}
+        for key,val in relayoutData.items():
+            if key.startswith("shapes["):
+                shape_idx= int(key.split("[")[1].split("]")[0])  # e.g. 1
+                attr= key.split(".")[-1] # x0,y0,x1,y1, etc.
+                if shape_idx not in shapes_by_idx:
+                    shapes_by_idx[shape_idx]={}
+                shapes_by_idx[shape_idx][attr]= val
 
-            # Now unify them => shape i => { "name":..., "x0":..., "x1":..., "y0":..., "y1":...}
-            zero_map= {}
-            pole_lines= {}
+        # stable region => shape #0 => ignore
+        # zeros => shapes i=1..num_zeros
+        # poles => shapes i=(1+num_zeros)..(1+num_zeros+num_poles-1)
+        num_zeros= len(old_zeros)
+        num_poles= len(old_poles)
 
-            for i, shape_dict in shapes_by_idx.items():
-                sname= shape_dict.get("name","")
-                if not sname or sname=="stable-region":
-                    continue
-                # gather coords
-                x0= shape_dict.get("x0", 0.0)
-                x1= shape_dict.get("x1", 0.0)
-                y0= shape_dict.get("y0", 0.0)
-                y1= shape_dict.get("y1", 0.0)
-                cx= (x0 + x1)/2.0
-                cy= (y0 + y1)/2.0
+        # shape[1..num_zeros] => zeros
+        # shape[start_of_poles..end_of_poles] => poles
+        start_poles= 1+ num_zeros
+        end_poles= start_poles + num_poles -1  # inclusive
 
-                if sname.startswith("zero-"):
-                    zidx= int(sname.split("-")[1])
-                    zero_map[zidx]= (cx, cy)
-                elif sname.startswith("pole-"):
-                    # e.g. pole-2-line0
-                    parts= sname.split("-")
-                    pidx= int(parts[1])
-                    if pidx not in pole_lines:
-                        pole_lines[pidx]= []
-                    pole_lines[pidx].append( (cx, cy) )
+        for i, shape_dict in shapes_by_idx.items():
+            if i==0:
+                continue # stable region
+            x0= shape_dict.get("x0",0.)
+            x1= shape_dict.get("x1",0.)
+            y0= shape_dict.get("y0",0.)
+            y1= shape_dict.get("y1",0.)
+            cx= (x0 + x1)/2.0
+            cy= (y0 + y1)/2.0
 
-            # unify zeros
-            for zidx,(xx,yy) in zero_map.items():
-                old_zeros[zidx]= complex(xx,yy)
+            if 1<= i <= num_zeros:
+                # it's a zero
+                zidx= i-1
+                old_zeros[zidx]= complex(cx, cy)
+            elif start_poles <= i <= end_poles:
+                pidx= i- start_poles
+                old_poles[pidx]= complex(cx, cy)
+            else:
+                # out of range => ignore
+                pass
 
-            # unify poles => if line0 or line1 missing => old store
-            for pidx in range(len(old_poles)):
-                if pidx not in pole_lines:
-                    continue
-                coords= pole_lines[pidx]
-                if len(coords)==1:
-                    # user only dragged one line => get old store location for the other
-                    old_cx= old_poles[pidx].real
-                    old_cy= old_poles[pidx].imag
-                    coords.append((old_cx, old_cy))
-                # average
-                xs= [c[0] for c in coords]
-                ys= [c[1] for c in coords]
-                cx_avg= sum(xs)/len(xs)
-                cy_avg= sum(ys)/len(ys)
-                old_poles[pidx]= complex(cx_avg, cy_avg)
-
-    # Finally recalc bode/impulse
+    # Recompute Bode & impulse
     def freqz_zpk(zlist, plist, k):
         analog=(domain=="analog")
         if analog:
             if ftype in ["bandpass","bandstop"]:
-                lo=min(c1,c2)
-                hi=max(c1,c2)
-                fmin=max(1e-3, 0.1*lo)
-                fmax=max(fmin*10, 10*hi)
+                lo=min(c1,c2); hi=max(c1,c2)
+                fmin=max(1e-3,0.1*lo)
+                fmax=max(fmin*10,10*hi)
             else:
                 fmin=max(1e-3,0.1*c1)
                 fmax=max(fmin*10,10*c1)
-            w= np.logspace(np.log10(fmin), np.log10(fmax),500)
+            w= np.logspace(np.log10(fmin), np.log10(fmax), 500)
             s= 1j*w
             num= np.ones_like(s,dtype=complex)
             den= np.ones_like(s,dtype=complex)
@@ -469,8 +455,8 @@ def update_all(
         else:
             w= np.linspace(0,np.pi,800)
             ejw= np.exp(1j*w)
-            num= np.ones_like(ejw, dtype=complex)
-            den= np.ones_like(ejw, dtype=complex)
+            num= np.ones_like(ejw,dtype=complex)
+            den= np.ones_like(ejw,dtype=complex)
             for zz in zlist:
                 num*= (ejw-zz)
             for pp in plist:
@@ -508,7 +494,7 @@ def update_all(
     if domain=="analog":
         bode_fig["layout"]["xaxis"]["type"]="log"
 
-    # impulse
+    # Impulse
     impulse_fig={
         "data":[],
         "layout":{
@@ -516,13 +502,12 @@ def update_all(
             "margin":{"l":60,"r":20,"t":40,"b":50}
         }
     }
-
     if domain=="analog":
         if not old_poles and not old_zeros:
             t_=[0,1e-3]
             h_=[old_gain,0]
         else:
-            neg_p= [p for p in old_poles if p.real<0]
+            neg_p=[p for p in old_poles if p.real<0]
             if neg_p:
                 slowest= max([-1.0/p.real for p in neg_p if p.real<0], default=1)
             else:
@@ -539,11 +524,11 @@ def update_all(
         impulse_fig["layout"]["xaxis"]={"title":"Time (s)"}
         impulse_fig["layout"]["yaxis"]={"title":"Amplitude"}
     else:
-        b,a= signal.zpk2tf(old_zeros, old_poles, old_gain)
+        b,a= signal.zpk2tf(old_zeros,old_poles,old_gain)
         if old_poles:
             max_mag= max(abs(pp) for pp in old_poles)
         else:
-            max_mag= 0
+            max_mag=0
         N=100 if max_mag<1 else 200
         imp= np.zeros(N); imp[0]=1.
         h_= signal.lfilter(b,a,imp)
@@ -552,12 +537,12 @@ def update_all(
         impulse_fig["layout"]["xaxis"]={"title":"Samples (n)"}
         impulse_fig["layout"]["yaxis"]={"title":"Amplitude"}
 
-    # build PZ figure
+    # Build PZ figure
     fig_pz={
         "data":[],
         "layout":{
             "title":"Pole-Zero Plot",
-            "uirevision":"pz-uirev",  # preserve shape changes
+            "uirevision":"pz-uirev", # preserve shape changes
             "xaxis":{"title":"Real Axis"},
             "yaxis":{"title":"Imag Axis","scaleanchor":"x","scaleratio":1},
             "margin":{"l":60,"r":20,"t":40,"b":50},
@@ -565,65 +550,84 @@ def update_all(
             "showlegend":False
         }
     }
-
-    # stable region
+    # stable region => shape[0], not draggable
     if domain=="analog":
         shape_stable={
-            "type":"rect","xref":"x","yref":"y","name":"stable-region",
+            "type":"rect","xref":"x","yref":"y",
             "x0":-9999,"x1":0,"y0":-9999,"y1":9999,
             "fillcolor":"rgba(0,255,0,0.07)",
-            "line":{"width":0},"layer":"below"
+            "line":{"width":0},
+            "layer":"below",
+            "editable":False
         }
     else:
         shape_stable={
-            "type":"circle","xref":"x","yref":"y","name":"stable-region",
+            "type":"circle","xref":"x","yref":"y",
             "x0":-1,"x1":1,"y0":-1,"y1":1,
             "fillcolor":"rgba(0,255,0,0.07)",
-            "line":{"width":0},"layer":"below"
+            "line":{"width":0},
+            "layer":"below",
+            "editable":False
         }
     fig_pz["layout"]["shapes"].append(shape_stable)
 
-    all_x= [z.real for z in old_zeros]+[p.real for p in old_poles]
-    all_y= [z.imag for z in old_zeros]+[p.imag for p in old_poles]
-    ax_lim=1.0
-    if all_x or all_y:
-        maxi= max([1.0]+[abs(v) for v in all_x+all_y])
-        ax_lim= maxi*1.2
-    fig_pz["layout"]["xaxis"]["range"]=[-ax_lim, ax_lim]
-    fig_pz["layout"]["yaxis"]["range"]=[-ax_lim, ax_lim]
+    # Next => shape[1..num_zeros] for zeros (draggable circles)
+    # Then => shape for poles (draggable circles)
+    # We'll add decorative lines for poles after, but set "editable":False so they won't appear in relayoutData
 
-    # zeros => shape
-    for zidx,z_ in enumerate(old_zeros):
-        zx=float(z_.real)
-        zy=float(z_.imag)
-        shape_z={
-            "type":"circle","xref":"x","yref":"y","name":f"zero-{zidx}",
-            "x0":zx-0.05,"x1":zx+0.05,
-            "y0":zy-0.05,"y1":zy+0.05,
+    shape_index=1
+    # zeros
+    for z_ in old_zeros:
+        zx= float(z_.real)
+        zy= float(z_.imag)
+        shape_zero={
+            "type":"circle","xref":"x","yref":"y",
+            "x0": zx-0.05,"x1": zx+0.05,
+            "y0": zy-0.05,"y1": zy+0.05,
             "line":{"color":"#1f77b4","width":2},
-            "fillcolor":"rgba(0,0,0,0)"
+            "fillcolor":"rgba(0,0,0,0)",
+            # crucial => shapes for zeros/poles must be draggable => no "editable":False
         }
-        fig_pz["layout"]["shapes"].append(shape_z)
+        fig_pz["layout"]["shapes"].append(shape_zero)
+        shape_index +=1
 
-    # poles => 2 lines each
-    for pidx,p_ in enumerate(old_poles):
-        px=float(p_.real)
-        py=float(p_.imag)
-        d=0.07
-        shape_l1={
-            "type":"line","xref":"x","yref":"y","name":f"pole-{pidx}-line0",
+    # poles => each has a circle for dragging
+    # We'll also draw the "X" lines as separate shapes (non-draggable)
+    for i, p_ in enumerate(old_poles):
+        px= float(p_.real)
+        py= float(p_.imag)
+        circle_p={
+            "type":"circle","xref":"x","yref":"y",
+            "x0": px-0.05,"x1": px+0.05,
+            "y0": py-0.05,"y1": py+0.05,
+            "line":{"color":"#d62728","width":2},
+            "fillcolor":"rgba(0,0,0,0)",
+        }
+        fig_pz["layout"]["shapes"].append(circle_p)
+        shape_index+=1
+
+    # Now draw decorative "X" lines for each pole => "editable":False so not in relayoutData
+    # This never gets tracked by user drags; the circle is the real handle
+    for i, p_ in enumerate(old_poles):
+        px= float(p_.real)
+        py= float(p_.imag)
+        d= 0.07
+        # line0
+        fig_pz["layout"]["shapes"].append({
+            "type":"line","xref":"x","yref":"y",
             "x0":px-d,"x1":px+d,
             "y0":py-d,"y1":py+d,
-            "line":{"color":"#d62728","width":2}
-        }
-        shape_l2={
-            "type":"line","xref":"x","yref":"y","name":f"pole-{pidx}-line1",
+            "line":{"color":"#d62728","width":2},
+            "editable":False
+        })
+        # line1
+        fig_pz["layout"]["shapes"].append({
+            "type":"line","xref":"x","yref":"y",
             "x0":px-d,"x1":px+d,
             "y0":py+d,"y1":py-d,
-            "line":{"color":"#d62728","width":2}
-        }
-        fig_pz["layout"]["shapes"].append(shape_l1)
-        fig_pz["layout"]["shapes"].append(shape_l2)
+            "line":{"color":"#d62728","width":2},
+            "editable":False
+        })
 
     # finalize store
     new_store={
