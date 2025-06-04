@@ -249,7 +249,7 @@ plt.show()
 # Multiple injections demonstration
 # =============================================================================
 
-n_injections = 50
+n_injections = 500
 t_true_list = []
 t_hat_list = []
 t_hat_corr_list = []
