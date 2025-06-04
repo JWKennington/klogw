@@ -443,13 +443,12 @@ def update_all(fam, ftype, order, domain, c1, c2,
 
     # 2) If “GW Inspiral Approx” is selected, design that directly:
     if fam == "GW":
-        # We ignore c1/c2 for this family; always treat as analog then bilinear if needed.
         zlist, plist, k_new = design_filter("GW", ftype, order, domain, c1, c2)
         old_zeros = [complex(zv[0], zv[1]) for zv in zlist]
         old_poles = [complex(pv[0], pv[1]) for pv in plist]
         old_gain  = k_new
 
-    # 3) If filter parameters changed (and not Custom), re‐design those:
+    # 3) If filter parameters changed (and not Custom/GW), re‐design those:
     if trig_id in [
         "family-dropdown", "type-dropdown", "order-input",
         "domain-radio", "cutoff1-input", "cutoff2-input"
@@ -627,7 +626,7 @@ def update_all(fam, ftype, order, domain, c1, c2,
     phase = np.unwrap(np.angle(H))
     phase_deg = phase * 180. / np.pi
 
-    # Build Bode figure with explicit titles & axis labels
+    # Build Bode figure with explicit nested titles & axis labels
     bode_fig = {
         "data": [
             {
@@ -648,25 +647,23 @@ def update_all(fam, ftype, order, domain, c1, c2,
             }
         ],
         "layout": {
-            "title": "Frequency Response (Bode Plot)",
-            "margin": {"l": 60, "r": 60, "t": 40, "b": 50},
+            "title": {"text": "Frequency Response (Bode Plot)", "x": 0.5},
+            "margin": {"l": 60, "r": 60, "t": 60, "b": 50},
             "showlegend": False,
-            "xaxis": {
-                "title": "Frequency (rad/s)" if domain == "analog" else "Frequency (rad/sample)"
-            },
-            "yaxis": {"title": "Magnitude (dB)"},
-            "yaxis2": {"title": "Phase (deg)", "overlaying": "y", "side": "right"}
+            "xaxis": {"title": {"text": "Frequency (rad/s)" if domain=="analog" else "Frequency (rad/sample)"}},
+            "yaxis": {"title": {"text": "Magnitude (dB)"}},
+            "yaxis2": {"title": {"text": "Phase (deg)"}, "overlaying": "y", "side": "right"}
         }
     }
     if domain == "analog":
         bode_fig["layout"]["xaxis"]["type"] = "log"
 
-    # Build Impulse figure (real + imaginary, with titles/labels)
+    # Build Impulse figure (nested titles/axis labels)
     impulse_fig = {
         "data": [],
         "layout": {
-            "title": "Impulse Response",
-            "margin": {"l": 60, "r": 20, "t": 40, "b": 50},
+            "title": {"text": "Impulse Response", "x": 0.5},
+            "margin": {"l": 60, "r": 20, "t": 60, "b": 50},
             "xaxis": {},
             "yaxis": {}
         }
@@ -708,8 +705,8 @@ def update_all(fam, ftype, order, domain, c1, c2,
             "name": "Im{h(t)}",
             "marker": {"color": LIGO_RED}
         })
-        impulse_fig["layout"]["xaxis"] = {"title": "Time (s)"}
-        impulse_fig["layout"]["yaxis"] = {"title": "Amplitude"}
+        impulse_fig["layout"]["xaxis"] = {"title": {"text": "Time (s)"}}
+        impulse_fig["layout"]["yaxis"] = {"title": {"text": "Amplitude"}}
 
     else:
         b, a = signal.zpk2tf(old_zeros, old_poles, old_gain)
@@ -737,25 +734,25 @@ def update_all(fam, ftype, order, domain, c1, c2,
             "name": "Im{h[n]}",
             "marker": {"color": LIGO_RED}
         })
-        impulse_fig["layout"]["xaxis"] = {"title": "Samples (n)"}
-        impulse_fig["layout"]["yaxis"] = {"title": "Amplitude"}
+        impulse_fig["layout"]["xaxis"] = {"title": {"text": "Samples (n)"}}
+        impulse_fig["layout"]["yaxis"] = {"title": {"text": "Amplitude"}}
 
     # Build Pole‐Zero figure with unit‐circle/left‐half shading
     fig_pz = {
         "data": [],
         "layout": {
-            "title": "Pole‐Zero Plot",
+            "title": {"text": "Pole‐Zero Plot", "x": 0.5},
             "uirevision": "pz-uirev",
             "xaxis": {
-                "title": "Real Axis",
+                "title": {"text": "Real Axis"},
                 "zeroline": True, "zerolinecolor": "#aaa"
             },
             "yaxis": {
-                "title": "Imag Axis",
+                "title": {"text": "Imag Axis"},
                 "scaleanchor": "x", "scaleratio": 1,
                 "zeroline": True, "zerolinecolor": "#aaa"
             },
-            "margin": {"l":60,"r":20,"t":40,"b":50},
+            "margin": {"l":60,"r":20,"t":60,"b":50},
             "shapes": [],
             "showlegend": False
         }
