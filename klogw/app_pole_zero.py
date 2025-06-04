@@ -20,6 +20,10 @@ DEFAULT_DOMAIN   = "analog"
 DEFAULT_CUTOFF1  = 1.0
 DEFAULT_CUTOFF2  = 2.0
 
+# Reasonable digital defaults for bandpass when switching domains
+DIGITAL_SINGLE_DEFAULT = 0.2
+DIGITAL_BAND_DEFAULTS = (0.2, 0.5)
+
 FILTER_FAMILIES = [
     {"label":"Butterworth",        "value":"Butterworth"},
     {"label":"Chebyshev I",        "value":"Chebyshev I"},
@@ -271,7 +275,7 @@ def sanitize_json(obj):
 
 
 ##################################################
-# Filter design (clamp only; digital band inputs clamped to valid range)
+# Filter design (no extra clamping; relies on preprocessed cutoffs)
 ##################################################
 
 def design_filter(family, ftype, order, domain, c1, c2):
@@ -315,7 +319,6 @@ def design_filter(family, ftype, order, domain, c1, c2):
     else:
         Wn = c1
 
-    # Attempt SciPy design
     try:
         if family == "Butterworth":
             z, p, k = signal.butter(order, Wn, btype=ftype, analog=analog, output="zpk")
@@ -329,7 +332,7 @@ def design_filter(family, ftype, order, domain, c1, c2):
             z, p, k = signal.bessel(order, Wn, btype=ftype, analog=analog, output="zpk")
         else:
             z, p, k = np.array([]), np.array([]), 1.0
-    except:
+    except Exception:
         z, p, k = np.array([]), np.array([]), 1.0
 
     zeros = [[float(zr.real), float(zr.imag)] for zr in z]
@@ -383,6 +386,25 @@ def toggle_cut2(ftype, domain):
 
 
 ##################################################
+# Reset cutoffs when switching to digital
+##################################################
+
+@app.callback(
+    Output("cutoff1-input", "value"),
+    Output("cutoff2-input", "value"),
+    Input("domain-radio", "value"),
+    Input("type-dropdown", "value")
+)
+def reset_cutoffs_on_digital(domain, ftype):
+    if domain == "digital":
+        if ftype in ["bandpass", "bandstop"]:
+            return DIGITAL_BAND_DEFAULTS
+        else:
+            return DIGITAL_SINGLE_DEFAULT, dash.no_update
+    return dash.no_update, dash.no_update
+
+
+##################################################
 # Unified callback: update store + figures
 ##################################################
 
@@ -432,23 +454,8 @@ def update_all(fam, ftype, order, domain, c1, c2,
         "domain-radio", "cutoff1-input", "cutoff2-input"
     ]:
         if fam not in ("Custom", "GW"):
-            # For digital bandpass/bandstop: clamp and ensure valid lo<hi
+            # For digital bandpass/bandstop: use c1,c2 directly (already reset by callback above)
             c1_eff, c2_eff = c1, c2
-            if domain == "digital" and ftype in ["bandpass","bandstop"]:
-                lo = min(c1, c2)
-                hi = max(c1, c2)
-                lo = max(lo, 1e-6)
-                hi = min(hi, 0.999999)
-                if lo >= hi:
-                    lo, hi = 1e-6, 0.999999
-                c1_eff, c2_eff = lo, hi
-            elif domain == "digital":
-                wc = c1
-                wc = min(max(wc, 1e-6), 0.999999)
-                c1_eff, c2_eff = wc, c2
-            else:
-                c1_eff, c2_eff = c1, c2
-
             zlist, plist, k_new = design_filter(fam, ftype, order, domain, c1_eff, c2_eff)
             old_zeros = [complex(zv[0], zv[1]) for zv in zlist]
             old_poles = [complex(pv[0], pv[1]) for pv in plist]
