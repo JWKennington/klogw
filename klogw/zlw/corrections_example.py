@@ -23,7 +23,7 @@ import lalsimulation as lalsim
 # =============================================================================
 
 fs = 4096          # Sampling rate (Hz)
-duration = 2.0     # Duration of time series (seconds)
+duration = 20.0     # Duration of time series (seconds)
 N = int(fs * duration)
 dt = 1.0 / fs
 df = 1.0 / duration
@@ -36,6 +36,11 @@ def psd_aLIGO(f):
 PSD1 = np.array([psd_aLIGO(f) for f in freqs])
 perturbation = 0.1 * np.exp(-0.5 * ((freqs - 150.0) / 50.0)**2)
 PSD2 = PSD1 * (1.0 + perturbation)
+# 1) First, replace any NaNs with +∞
+PSD1[np.isnan(PSD1)] = np.inf
+PSD2[np.isnan(PSD2)] = np.inf
+
+# 2) Then replace any zero or negative (if they ever appear) with +∞
 PSD1[PSD1 <= 0] = np.inf
 PSD2[PSD2 <= 0] = np.inf
 
@@ -44,18 +49,40 @@ PSD2[PSD2 <= 0] = np.inf
 # =============================================================================
 
 def compute_minimum_phase_phi(psd, freqs):
+    """
+    Build a minimum‐phase whitening phase phi_mp(f) from a one‐sided PSD psd[f].
+    We will explicitly set the DC bin (f=0) to match the next nonzero bin,
+    so that logA_pos[0] is finite.
+    """
     M = len(freqs)
-    logA_pos = -0.5 * np.log(psd)
+
+    # 1) Copy PSD and replace f=0 with PSD[1] so log is finite.
+    psd2 = psd.copy()
+    psd2[0] = psd2[1]   # “duplicate” the f>0 value into the DC slot.
+    # (We already made sure psd2[0] = ∞ was set above, so now it becomes a large finite.)
+
+    # 2) Now logA_pos is finite everywhere:
+    logA_pos = -0.5 * np.log(psd2)   # no -∞ anywhere now, because psd2[0] = psd2[1] < ∞
+
+    # 3) Mirror around Nyquist to build the full (length N) log spectrum:
     logA_full = np.zeros(N, dtype=np.float64)
     logA_full[:M] = logA_pos
     logA_full[M:] = logA_pos[-2:0:-1]
+
+    # 4) Compute real cepstrum:
     cepstrum = np.fft.ifft(logA_full).real
+
+    # 5) Build the minimum‐phase cepstrum:
     minphase_cepstrum = np.zeros_like(cepstrum)
     minphase_cepstrum[0] = cepstrum[0]
-    minphase_cepstrum[1:N//2] = 2.0 * cepstrum[1:N//2]
+    minphase_cepstrum[1 : N // 2] = 2.0 * cepstrum[1 : N // 2]
     if N % 2 == 0:
-        minphase_cepstrum[N//2] = cepstrum[N//2]
+        minphase_cepstrum[N // 2] = cepstrum[N // 2]
+
+    # 6) FFT back to get the full complex log‐spectrum:
     logMin_full = np.fft.fft(minphase_cepstrum)
+
+    # 7) Extract φ_mp(f) = arg{…} on positive freqs:
     phi_mp = np.angle(logMin_full[:M])
     return phi_mp
 
@@ -166,12 +193,12 @@ Wfpos = Wf[1:]
 Phi = phi_mp
 Phi_pos = Phi[1:]
 
-num_t = np.trapz(fpos * Wfpos * Phi_pos, x=fpos)
-den_t = 2 * np.pi * np.trapz(fpos**2 * Wfpos, x=fpos)
+num_t = np.trapezoid(fpos * Wfpos * Phi_pos, x=fpos)
+den_t = 2 * np.pi * np.trapezoid(fpos**2 * Wfpos, x=fpos)
 Delta_t1 = num_t / den_t
 
-num_phi = np.trapz(Wfpos * Phi_pos, x=fpos)
-den_phi = np.trapz(Wfpos, x=fpos)
+num_phi = np.trapezoid(Wfpos * Phi_pos, x=fpos)
+den_phi = np.trapezoid(Wfpos, x=fpos)
 Delta_phi1 = num_phi / den_phi
 
 # =============================================================================

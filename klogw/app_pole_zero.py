@@ -86,9 +86,7 @@ app.index_string = r"""
       #controls-toggle-btn{ display:none!important; }
     }
     .dropdown-menu{ max-height:250px; overflow-y:auto; z-index:2000; }
-    .input-group .form-control {
-      min-width: 6ch;
-    }
+    .input-group .form-control { min-width: 6ch; }
     </style>
     {%renderer%}
 </head>
@@ -273,7 +271,7 @@ def sanitize_json(obj):
 
 
 ##################################################
-# Filter design (incl. “GW Inspiral Approx” logic)
+# Filter design (clamp only; digital band inputs clamped to valid range)
 ##################################################
 
 def design_filter(family, ftype, order, domain, c1, c2):
@@ -282,12 +280,8 @@ def design_filter(family, ftype, order, domain, c1, c2):
 
     analog = (domain == "analog")
 
-    # If “GW Inspiral Approx” is selected:
+    # 1) “GW Inspiral Approx” special case:
     if family == "GW":
-        # Three complex‐conjugate analog pole pairs:
-        #   Pair 1: ~30 Hz, Q=10
-        #   Pair 2: ~60 Hz, Q=10
-        #   Pair 3: ~120 Hz, Q=10
         Q = 10.0
         freqs = [30, 60, 120]  # Hz
         poles = []
@@ -305,39 +299,23 @@ def design_filter(family, ftype, order, domain, c1, c2):
             # Bilinear transform → digital poles
             p_dig = []
             for p in poles:
-                # z = (1 + p/2)/(1 - p/2)
                 zd = (1.0 + p/2.0) / (1.0 - p/2.0)
                 p_dig.append(zd)
             poles = np.array(p_dig)
-            zeros = np.array([])  # none to map
-            # Gain stays ≈1
-
+            zeros = np.array([])
         return (
             [[float(zr.real), float(zr.imag)] for zr in zeros],
             [[float(pr.real), float(pr.imag)] for pr in poles],
             float(k)
         )
 
-    # Otherwise proceed with the usual families:
+    # 2) Otherwise, “normal” families:
     if ftype in ["bandpass", "bandstop"]:
-        lo = min(c1, c2)
-        hi = max(c1, c2)
-        if analog:
-            if lo <= 0: lo = 1e-6
-        else:
-            if lo <= 0: lo = 1e-6
-            if hi >= 1: hi = 0.999999
-            if lo >= hi:
-                lo, hi = 0.2, 0.5
-        Wn = [lo, hi]
+        Wn = [c1, c2]
     else:
         Wn = c1
-        if analog:
-            if Wn <= 0: Wn = 1e-6
-        else:
-            if Wn >= 1: Wn = 0.999999
-            if Wn <= 0: Wn = 1e-6
 
+    # Attempt SciPy design
     try:
         if family == "Butterworth":
             z, p, k = signal.butter(order, Wn, btype=ftype, analog=analog, output="zpk")
@@ -351,7 +329,7 @@ def design_filter(family, ftype, order, domain, c1, c2):
             z, p, k = signal.bessel(order, Wn, btype=ftype, analog=analog, output="zpk")
         else:
             z, p, k = np.array([]), np.array([]), 1.0
-    except Exception:
+    except:
         z, p, k = np.array([]), np.array([]), 1.0
 
     zeros = [[float(zr.real), float(zr.imag)] for zr in z]
@@ -441,26 +419,45 @@ def update_all(fam, ftype, order, domain, c1, c2,
     old_zeros = [complex(z[0], z[1]) for z in store_data["zeros"]]
     old_gain  = store_data["gain"]
 
-    # 2) If “GW Inspiral Approx” is selected, design that directly:
+    # 2) If “GW Inspiral Approx” is selected, design that immediately
     if fam == "GW":
         zlist, plist, k_new = design_filter("GW", ftype, order, domain, c1, c2)
         old_zeros = [complex(zv[0], zv[1]) for zv in zlist]
         old_poles = [complex(pv[0], pv[1]) for pv in plist]
         old_gain  = k_new
 
-    # 3) If filter parameters changed (and not Custom/GW), re‐design those:
+    # 3) Handle filter‐parameter changes (not Custom/GW)
     if trig_id in [
         "family-dropdown", "type-dropdown", "order-input",
         "domain-radio", "cutoff1-input", "cutoff2-input"
     ]:
-        if fam != "Custom" and fam != "GW":
-            zlist, plist, k_new = design_filter(fam, ftype, order, domain, c1, c2)
+        if fam not in ("Custom", "GW"):
+            # For digital bandpass/bandstop: clamp and ensure valid lo<hi
+            c1_eff, c2_eff = c1, c2
+            if domain == "digital" and ftype in ["bandpass","bandstop"]:
+                lo = min(c1, c2)
+                hi = max(c1, c2)
+                lo = max(lo, 1e-6)
+                hi = min(hi, 0.999999)
+                if lo >= hi:
+                    lo, hi = 1e-6, 0.999999
+                c1_eff, c2_eff = lo, hi
+            elif domain == "digital":
+                wc = c1
+                wc = min(max(wc, 1e-6), 0.999999)
+                c1_eff, c2_eff = wc, c2
+            else:
+                c1_eff, c2_eff = c1, c2
+
+            zlist, plist, k_new = design_filter(fam, ftype, order, domain, c1_eff, c2_eff)
             old_zeros = [complex(zv[0], zv[1]) for zv in zlist]
             old_poles = [complex(pv[0], pv[1]) for pv in plist]
             old_gain  = k_new
-        elif fam == "Custom":
-            if trig_id == "domain-radio":
-                old_zeros = []; old_poles = []; old_gain = 1.0
+        else:
+            if fam == "Custom" and trig_id == "domain-radio":
+                old_zeros = []
+                old_poles = []
+                old_gain  = 1.0
 
     # 4) Add a pole
     if trig_id == "add-pole-btn":
@@ -474,9 +471,8 @@ def update_all(fam, ftype, order, domain, c1, c2,
             old_poles.append(complex(val, 0))
 
     # 5) Remove last pole
-    if trig_id == "remove-pole-btn":
-        if old_poles:
-            old_poles.pop()
+    if trig_id == "remove-pole-btn" and old_poles:
+        old_poles.pop()
 
     # 6) Add a zero
     if trig_id == "add-zero-btn":
@@ -493,9 +489,8 @@ def update_all(fam, ftype, order, domain, c1, c2,
                 old_zeros.append(complex(0.5, 0))
 
     # 7) Remove last zero
-    if trig_id == "remove-zero-btn":
-        if old_zeros:
-            old_zeros.pop()
+    if trig_id == "remove-zero-btn" and old_zeros:
+        old_zeros.pop()
 
     # 8) Match conjugates
     if trig_id == "match-btn":
@@ -533,13 +528,15 @@ def update_all(fam, ftype, order, domain, c1, c2,
 
     # 9) Clear
     if trig_id == "clear-btn":
-        if fam != "Custom" and fam != "GW":
+        if fam not in ("Custom", "GW"):
             zlist, plist, k_new = design_filter(fam, ftype, order, domain, c1, c2)
             old_zeros = [complex(zv[0], zv[1]) for zv in zlist]
             old_poles = [complex(pv[0], pv[1]) for pv in plist]
             old_gain  = k_new
         else:
-            old_zeros = []; old_poles = []; old_gain = 1.0
+            old_zeros = []
+            old_poles = []
+            old_gain  = 1.0
 
     # 10) Build shapes_meta_new in the same order we append shapes below
     shapes_meta_new = []
@@ -587,7 +584,7 @@ def update_all(fam, ftype, order, domain, c1, c2,
                 if 0 <= pidx < len(old_poles):
                     old_poles[pidx] = complex(cx, cy)
 
-    # 12) Recompute Bode & Impulse for filter-based
+    # 12) Recompute Bode & Impulse for filter‐based
     def freqz_zpk(zlist, plist, k):
         analog = (domain == "analog")
         if analog:
@@ -686,11 +683,10 @@ def update_all(fam, ftype, order, domain, c1, c2,
                 tout, yout = signal.impulse((b, a), T=t)
                 h_ = yout.astype(complex)
                 t_ = tout
-            except Exception:
+            except:
                 t_ = t
                 h_ = np.zeros_like(t, dtype=complex)
 
-        # Plot real & imag
         impulse_fig["data"].append({
             "x": t_,
             "y": np.real(h_).tolist(),
