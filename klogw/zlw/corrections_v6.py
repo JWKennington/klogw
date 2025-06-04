@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
 psd_mismatch_demo_v5.py
 
@@ -24,8 +23,6 @@ import matplotlib.pyplot as plt
 import lal
 import lalsimulation as lalsim
 
-from klogw.zlw.corrections_example import perturbation
-
 # =============================================================================
 # 1) SETUP: sampling rate, PSD1 vs PSD2, minimum‐phase phi_mp(f)
 # =============================================================================
@@ -48,7 +45,7 @@ PSD1 = np.array([psd_aLIGO(f) for f in freqs])
 # perturbation = 0.1 * np.exp(-0.5 * ((freqs - 150.0) / 50.0)**2)
 # Uniform perturbations beween -1 and 1
 perturbation = np.random.uniform(-1.0, 1.0, size=len(freqs))
-PSD2 = PSD1 * (1.0 + 1.0 * perturbation)
+PSD2 = PSD1 * (1.0 + 0.3 * perturbation)
 
 # Force any NaN or ≤0 (especially at f=0) → +∞
 PSD1[np.isnan(PSD1)] = np.inf
@@ -387,14 +384,33 @@ for i in range(n_injections):
     idx_peak_i  = np.argmax(np.abs(z_t_i))
     raw_lag_i   = tc_i[idx_peak_i]
 
-    # CONTROL by whitening data with W1
-    x2_i_ctrl = np.fft.irfft(Hsig_i * W1, n=N)
-    x2_unwrapped_ctrl = np.roll(x2_i_ctrl, -idx_shift)
-    x2_i_centered_ctrl = np.roll(x2_unwrapped_ctrl, N // 2)
-    tc_i_ctrl, z_t_i_ctrl = match_filter_time_series(h1_base_centered, x2_i_centered_ctrl)
+    # CONTROL by whitening data with W1:
+
+    # (a) build FD‐domain:  Hsig_i * W1
+    X2_i_ctrl = Hsig_i * W1
+
+    # (b) ifft → x2_ctrl_raw
+    x2_ctrl_raw = np.fft.irfft(X2_i_ctrl, n=N)
+
+    # (c) “Unwrap” that coalescence: from index round(t_true/dt) → index 0
+    x2_ctrl_unwrapped = np.roll(x2_ctrl_raw, -idx_shift)
+
+    # (d) Now “center” it: index 0 → index N//2
+    x2_i_ctrl_centered = np.roll(x2_ctrl_unwrapped, N // 2)
+
+    # (e) Finally, match‐filter against the centered template:
+    tc_i_ctrl, z_t_i_ctrl = match_filter_time_series(
+        h1_base_centered, x2_i_ctrl_centered
+    )
     idx_peak_i_ctrl = np.argmax(np.abs(z_t_i_ctrl))
     raw_lag_i_ctrl = tc_i_ctrl[idx_peak_i_ctrl]
 
+    # (6) Now print/debug the first few injections to confirm
+    if i < 3:
+        print(f" inj {i:2d}: t_true = {t_true:.4f} s, idx_shift = {idx_shift}")
+        print(f"    raw_lag REAL   = {raw_lag_i:.6f} s   (≈ Δt₁)")
+        print(f"    raw_lag CONTROL= {raw_lag_i_ctrl:.6f} s   (should be 0)")
+        print("    ——————————")
 
     # Plot first few injections:
     if i < 5:
@@ -478,84 +494,6 @@ plt.title('Coalescence Phase: Raw vs. Corrections')
 plt.legend()
 plt.xlim(0, 2*np.pi)
 plt.ylim(0, 2*np.pi)
-
-plt.tight_layout()
-plt.show()
-
-
-# =============================================================================
-#  5.5) OPTIONAL CHECK: Time‐Domain Plots of Random Injections
-#
-#  This block will:
-#    • draw a small number (e.g. 4) of random (t_true, φ_true)
-#    • build the FD “injection”   H_sig(f) = H0(f) · e^{i φ_true} · e^{−2π i f t_true}
-#    • whiten it by W2(f) → X2(f)
-#    • inverse‐FFT → x2(t): a real time‐series containing exactly the whitened
-#      injection shifted to t_true
-#    • plot x2(t) vs. t for a ±0.5 s window around t_true
-#  so you can visually inspect that the injection sits where you expect.
-#
-#  Make sure that, when you run the script, these four subplots show “bumps” in
-#  the whitened data x2(t) exactly at t≈t_true.  If they do not, something is wrong
-#  in the way you’re constructing H_sig or taking the IFFT.
-# =============================================================================
-
-import random
-
-# Number of example injections to plot
-n_examples = 4
-
-# Pre‐allocate arrays to hold (t_true, φ_true) for each example
-t_example = np.random.uniform(0.3, duration - 0.3, size=n_examples)
-φ_example = np.random.uniform(0.0, 2.0 * np.pi,     size=n_examples)
-
-# Prepare the time‐axis for plotting:
-t_full = np.linspace(0.0, duration, N, endpoint=False)
-
-# Create a figure with n_examples rows (one for each random injection)
-plt.figure(figsize=(8, 2.5 * n_examples))
-
-for k in range(n_examples):
-    # 1) Grab this example’s coalescence time and phase
-    t_true_k = t_example[k]
-    φ_true_k = φ_example[k]
-
-    # 2) Build the frequency‐domain injection:
-    #    H_sig_k(f) = H0(f) · e^{i φ_true_k} · e^{−2π i f t_true_k}
-    phase_shift_k = np.exp(-2j * np.pi * freqs * t_true_k)
-    Hsig_k       = H0 * np.exp(1j * φ_true_k) * phase_shift_k
-
-    # 3) Whiten the injection by PSD2’s min‐phase filter:
-    #    X2_k(f) = Hsig_k(f) · W2(f)
-    #    Then x2_k(t) = IFFT[ X2_k(f) ]
-    X2_k = Hsig_k * W2
-    x2_k = np.fft.irfft(X2_k, n=N)
-
-    # 4) Now plot a small window (±0.5 s) around t_true_k
-    #    Convert t_true_k to a sample index:
-    idx_center = int(np.round(t_true_k / dt))
-
-    #    We want ±(0.5 s) → ±(0.5 * fs) samples
-    half_window = int(0.5 * fs)
-
-    #    Define the slice limits (clamp to [0, N−1])
-    idx_lo = max(0, idx_center - half_window)
-    idx_hi = min(N, idx_center + half_window)
-
-    #    Corresponding time‐axis for this slice:
-    t_slice = t_full[idx_lo:idx_hi]
-    x2_slice = x2_k[idx_lo:idx_hi]
-
-    # 5) Subplot:
-    plt.subplot(n_examples, 1, k+1)
-    plt.plot(t_slice, x2_slice, 'r-')
-    plt.axvline(t_true_k, color='k', linestyle='--', linewidth=1,
-                label=f'$t_{{\\rm true}} = {t_true_k:.3f}\\,$s')
-    plt.xlabel('Time [s]')
-    plt.ylabel('Whitened $x_2(t)$')
-    plt.title(f'Example {k+1}: Injection at $t_{{true}}={t_true_k:.3f}\\,$s, $\\phi_{{true}}={φ_true_k:.2f}\\,$rad')
-    plt.xlim(t_true_k - 0.5, t_true_k + 0.5)
-    plt.legend(loc='upper right', fontsize='small')
 
 plt.tight_layout()
 plt.show()
