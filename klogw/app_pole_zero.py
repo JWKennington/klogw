@@ -452,7 +452,7 @@ def update_all(fam, ftype, order, domain, c1, c2,
 
     # 7) Match conjugates button
     if trig_id == "match-btn":
-        # For poles: build new list that enforces pairwise conj‐symmetry
+        # For poles: build new list enforcing conj‐symmetry
         new_poles = []
         seen = set()
         for p in old_poles:
@@ -460,13 +460,14 @@ def update_all(fam, ftype, order, domain, c1, c2,
                 new_poles.append(p)
             else:
                 conj_p = complex(p.real, -p.imag)
-                if (round(p.real,12), round(p.imag,12)) in seen or (round(conj_p.real,12), round(conj_p.imag,12)) in seen:
+                keyp = (round(p.real,12), round(p.imag,12))
+                keyc = (round(conj_p.real,12), round(conj_p.imag,12))
+                if keyp in seen or keyc in seen:
                     continue
-                # Add both
                 new_poles.append(p)
                 new_poles.append(conj_p)
-                seen.add((round(p.real,12), round(p.imag,12)))
-                seen.add((round(conj_p.real,12), round(conj_p.imag,12)))
+                seen.add(keyp)
+                seen.add(keyc)
         old_poles = new_poles
 
         # For zeros: same logic
@@ -477,12 +478,14 @@ def update_all(fam, ftype, order, domain, c1, c2,
                 new_zeros.append(z)
             else:
                 conj_z = complex(z.real, -z.imag)
-                if (round(z.real,12), round(z.imag,12)) in seenz or (round(conj_z.real,12), round(conj_z.imag,12)) in seenz:
+                keyz = (round(z.real,12), round(z.imag,12))
+                keycz = (round(conj_z.real,12), round(conj_z.imag,12))
+                if keyz in seenz or keycz in seenz:
                     continue
                 new_zeros.append(z)
                 new_zeros.append(conj_z)
-                seenz.add((round(z.real,12), round(z.imag,12)))
-                seenz.add((round(conj_z.real,12), round(conj_z.imag,12)))
+                seenz.add(keyz)
+                seenz.add(keycz)
         old_zeros = new_zeros
 
     # 8) Clear
@@ -497,7 +500,14 @@ def update_all(fam, ftype, order, domain, c1, c2,
 
     # 9) Build shapes_meta_new in the same order we’ll append shapes below
     shapes_meta_new = []
-    shapes_meta_new.append("stable-region")
+    if domain == "analog":
+        # just one stable‐region
+        shapes_meta_new.append("stable-region")
+    else:
+        # two digital unit‐circle shapes
+        shapes_meta_new.append("stable-region-fill")
+        shapes_meta_new.append("stable-region-border")
+
     for zidx in range(len(old_zeros)):
         shapes_meta_new.append(f"zero-{zidx}")
     for pidx in range(len(old_poles)):
@@ -518,6 +528,10 @@ def update_all(fam, ftype, order, domain, c1, c2,
             if idx >= len(shapes_meta):
                 continue
             shape_id = shapes_meta[idx]
+            # Skip any "stable-region" shapes outright
+            if shape_id.startswith("stable-region"):
+                continue
+
             x0 = coords_dict.get("x0", 0.0)
             x1 = coords_dict.get("x1", 0.0)
             y0 = coords_dict.get("y0", 0.0)
@@ -633,13 +647,13 @@ def update_all(fam, ftype, order, domain, c1, c2,
 
             try:
                 tout, yout = signal.impulse((b, a), T=t)
-                h_ = yout.astype(complex)  # may be complex if filter is complex‐coeff
+                h_ = yout.astype(complex)  # possibly complex
                 t_ = tout
             except Exception:
                 t_ = t
                 h_ = np.zeros_like(t, dtype=complex)
 
-        # Plot both real and imaginary parts
+        # Plot both real & imaginary parts
         impulse_fig["data"].append({
             "x": t_,
             "y": np.real(h_).tolist(),
@@ -666,7 +680,7 @@ def update_all(fam, ftype, order, domain, c1, c2,
         N = 100 if max_mag < 1 else 200
         imp = np.zeros(N)
         imp[0] = 1.0
-        h_ = signal.lfilter(b, a, imp).astype(complex)  # may be complex if poles/zeros complex
+        h_ = signal.lfilter(b, a, imp).astype(complex)
         n_ = np.arange(N)
 
         impulse_fig["data"].append({
@@ -686,12 +700,12 @@ def update_all(fam, ftype, order, domain, c1, c2,
         impulse_fig["layout"]["xaxis"] = {"title": "Samples (n)"}
         impulse_fig["layout"]["yaxis"] = {"title": "Amplitude"}
 
-    # Build PZ figure (same index order each time)
+    # Build PZ figure
     fig_pz = {
         "data": [],
         "layout": {
             "title": "Pole-Zero Plot",
-            "uirevision": "pz-uirev",  # preserve user‐dragged positions
+            "uirevision": "pz-uirev",
             "xaxis": {"title": "Real Axis", "zeroline": True, "zerolinecolor": "#aaa"},
             "yaxis": {"title": "Imag Axis", "scaleanchor": "x", "scaleratio": 1, "zeroline": True, "zerolinecolor": "#aaa"},
             "margin": {"l": 60, "r": 20, "t": 40, "b": 50},
@@ -700,7 +714,7 @@ def update_all(fam, ftype, order, domain, c1, c2,
         }
     }
 
-    # shape 0 → stable region (non‐draggable)
+    # shape 0…(analog or digital)
     if domain == "analog":
         shape_stable = {
             "type": "rect", "xref": "x", "yref": "y",
@@ -713,7 +727,7 @@ def update_all(fam, ftype, order, domain, c1, c2,
         fig_pz["layout"]["shapes"].append(shape_stable)
 
     else:
-        # Digital: shade unit circle + dashed border
+        # digital: two shapes for unit circle
         shape_circle_fill = {
             "type": "circle", "xref": "x", "yref": "y",
             "x0": -1.0, "x1": 1.0, "y0": -1.0, "y1": 1.0,
@@ -733,8 +747,8 @@ def update_all(fam, ftype, order, domain, c1, c2,
         fig_pz["layout"]["shapes"].append(shape_circle_fill)
         fig_pz["layout"]["shapes"].append(shape_circle_border)
 
-    # shape indices 1..(1+num_zeros−1) → zero circles (draggable)
-    idx = 1
+    # zeros → draggable circles
+    idx = 1 if domain == "analog" else 2
     for zidx, z_ in enumerate(old_zeros):
         zx = float(z_.real)
         zy = float(z_.imag)
@@ -748,7 +762,7 @@ def update_all(fam, ftype, order, domain, c1, c2,
         fig_pz["layout"]["shapes"].append(shape_zero)
         idx += 1
 
-    # shape indices (1+num_zeros).. → pole squares (single rect per pole)
+    # poles → draggable squares (rect)
     for pidx, p_ in enumerate(old_poles):
         px = float(p_.real)
         py = float(p_.imag)
@@ -763,7 +777,7 @@ def update_all(fam, ftype, order, domain, c1, c2,
         fig_pz["layout"]["shapes"].append(shape_pole)
         idx += 1
 
-    # Determine symmetrical axis limits so (0,0) is centered
+    # Center axes so (0,0) is in the middle
     all_x = [z.real for z in old_zeros] + [p.real for p in old_poles]
     all_y = [z.imag for z in old_zeros] + [p.imag for p in old_poles]
     if not all_x and not all_y:
