@@ -183,12 +183,12 @@ toggle_btn = dbc.Button(
 )
 
 pz_buttons = html.Div([
-    dbc.Button("Add Pole",    id="add-pole-btn",    color="primary", outline=True, size="sm", className="me-2"),
-    dbc.Button("Remove Last Pole", id="remove-pole-btn", color="danger", outline=True, size="sm", className="me-2"),
-    dbc.Button("Add Zero",    id="add-zero-btn",    color="primary", outline=True, size="sm", className="me-2"),
-    dbc.Button("Remove Last Zero", id="remove-zero-btn", color="danger", outline=True, size="sm", className="me-2"),
-    dbc.Button("Match Conjugates", id="match-btn", color="secondary", size="sm", className="me-2"),
-    dbc.Button("Clear All",   id="clear-btn",       color="secondary", size="sm"),
+    dbc.Button("Add Pole",      id="add-pole-btn",    color="primary",   outline=True, size="sm", className="me-2"),
+    dbc.Button("Remove Last Pole", id="remove-pole-btn", color="danger",    outline=True, size="sm", className="me-2"),
+    dbc.Button("Add Zero",      id="add-zero-btn",    color="primary",   outline=True, size="sm", className="me-2"),
+    dbc.Button("Remove Last Zero", id="remove-zero-btn", color="danger",    outline=True, size="sm", className="me-2"),
+    dbc.Button("Match Conjugates", id="match-btn",      color="secondary", size="sm", className="me-2"),
+    dbc.Button("Clear All",     id="clear-btn",       color="secondary", size="sm"),
 ], className="mb-2")
 
 pz_graph = dcc.Graph(
@@ -224,9 +224,6 @@ app.layout = html.Div([
         )
     ], className="gx-0 main-content-row flex-nowrap", style={"margin":0}),
 
-    # Two stores:
-    #   1) pz-store for poles/zeros/gain
-    #   2) shapes-meta for tracking each shape’s ID by index
     dcc.Store(id="pz-store", data={"poles":[],"zeros":[],"gain":1.0}),
     dcc.Store(id="shapes-meta", data=[]),
 ], style={"display":"flex","flexDirection":"column","minHeight":"100vh"})
@@ -249,7 +246,6 @@ def sanitize_json(obj):
         return sanitize_json(obj.tolist())
 
     if isinstance(obj, complex):
-        # Only drop tiny imaginary parts (<1e-12)
         if abs(obj.imag) < 1e-12:
             return float(obj.real)
         else:
@@ -271,7 +267,7 @@ def sanitize_json(obj):
 
 
 ##################################################
-# Filter design
+# Filter design (clamp + fallback for digital BP)
 ##################################################
 
 def design_filter(family, ftype, order, domain, c1, c2):
@@ -280,15 +276,23 @@ def design_filter(family, ftype, order, domain, c1, c2):
 
     analog = (domain == "analog")
 
+    # Build Wn safely:
     if ftype in ["bandpass", "bandstop"]:
         lo = min(c1, c2)
         hi = max(c1, c2)
         if analog:
             if lo <= 0: lo = 1e-6
+            # hi can be anything > lo
         else:
+            # Digital: clamp into (0,1)
             if lo <= 0: lo = 1e-6
             if hi >= 1: hi = 0.999999
+            # Now ensure lo < hi. If clamping made lo >= hi, fall back:
+            if lo >= hi:
+                lo = 0.2
+                hi = 0.5
         Wn = [lo, hi]
+
     else:
         Wn = c1
         if analog:
@@ -297,6 +301,7 @@ def design_filter(family, ftype, order, domain, c1, c2):
             if Wn >= 1: Wn = 0.999999
             if Wn <= 0: Wn = 1e-6
 
+    # Now call SciPy
     try:
         if family == "Butterworth":
             z, p, k = signal.butter(order, Wn, btype=ftype, analog=analog, output="zpk")
@@ -311,6 +316,7 @@ def design_filter(family, ftype, order, domain, c1, c2):
         else:
             z, p, k = np.array([]), np.array([]), 1.0
     except Exception:
+        # If SciPy still fails for some reason, return no poles/zeros
         z, p, k = np.array([]), np.array([]), 1.0
 
     zeros = [[float(zr.real), float(zr.imag)] for zr in z]
@@ -394,7 +400,6 @@ def update_all(fam, ftype, order, domain, c1, c2,
                relayoutData, store_data, shapes_meta):
     ctx = callback_context
     trig_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
-    print(f"[DEBUG] triggered => {trig_id}")
 
     # 1) Read existing store
     old_poles = [complex(p[0], p[1]) for p in store_data["poles"]]
@@ -452,11 +457,10 @@ def update_all(fam, ftype, order, domain, c1, c2,
 
     # 7) Match conjugates button
     if trig_id == "match-btn":
-        # For poles: build new list enforcing conj‐symmetry
         new_poles = []
         seen = set()
         for p in old_poles:
-            if abs(p.imag) < 1e-12:  # real pole
+            if abs(p.imag) < 1e-12:
                 new_poles.append(p)
             else:
                 conj_p = complex(p.real, -p.imag)
@@ -464,13 +468,10 @@ def update_all(fam, ftype, order, domain, c1, c2,
                 keyc = (round(conj_p.real,12), round(conj_p.imag,12))
                 if keyp in seen or keyc in seen:
                     continue
-                new_poles.append(p)
-                new_poles.append(conj_p)
-                seen.add(keyp)
-                seen.add(keyc)
+                new_poles.append(p); new_poles.append(conj_p)
+                seen.add(keyp); seen.add(keyc)
         old_poles = new_poles
 
-        # For zeros: same logic
         new_zeros = []
         seenz = set()
         for z in old_zeros:
@@ -478,14 +479,12 @@ def update_all(fam, ftype, order, domain, c1, c2,
                 new_zeros.append(z)
             else:
                 conj_z = complex(z.real, -z.imag)
-                keyz = (round(z.real,12), round(z.imag,12))
+                keyz  = (round(z.real,12), round(z.imag,12))
                 keycz = (round(conj_z.real,12), round(conj_z.imag,12))
                 if keyz in seenz or keycz in seenz:
                     continue
-                new_zeros.append(z)
-                new_zeros.append(conj_z)
-                seenz.add(keyz)
-                seenz.add(keycz)
+                new_zeros.append(z); new_zeros.append(conj_z)
+                seenz.add(keyz); seenz.add(keycz)
         old_zeros = new_zeros
 
     # 8) Clear
@@ -501,10 +500,8 @@ def update_all(fam, ftype, order, domain, c1, c2,
     # 9) Build shapes_meta_new in the same order we’ll append shapes below
     shapes_meta_new = []
     if domain == "analog":
-        # just one stable‐region
         shapes_meta_new.append("stable-region")
     else:
-        # two digital unit‐circle shapes
         shapes_meta_new.append("stable-region-fill")
         shapes_meta_new.append("stable-region-border")
 
@@ -528,8 +525,8 @@ def update_all(fam, ftype, order, domain, c1, c2,
             if idx >= len(shapes_meta):
                 continue
             shape_id = shapes_meta[idx]
-            # Skip any "stable-region" shapes outright
             if shape_id.startswith("stable-region"):
+                # skip any stable‐region shape
                 continue
 
             x0 = coords_dict.get("x0", 0.0)
@@ -647,13 +644,12 @@ def update_all(fam, ftype, order, domain, c1, c2,
 
             try:
                 tout, yout = signal.impulse((b, a), T=t)
-                h_ = yout.astype(complex)  # possibly complex
+                h_ = yout.astype(complex)
                 t_ = tout
             except Exception:
                 t_ = t
                 h_ = np.zeros_like(t, dtype=complex)
 
-        # Plot both real & imaginary parts
         impulse_fig["data"].append({
             "x": t_,
             "y": np.real(h_).tolist(),
@@ -714,7 +710,6 @@ def update_all(fam, ftype, order, domain, c1, c2,
         }
     }
 
-    # shape 0…(analog or digital)
     if domain == "analog":
         shape_stable = {
             "type": "rect", "xref": "x", "yref": "y",
@@ -725,9 +720,7 @@ def update_all(fam, ftype, order, domain, c1, c2,
             "editable": False
         }
         fig_pz["layout"]["shapes"].append(shape_stable)
-
     else:
-        # digital: two shapes for unit circle
         shape_circle_fill = {
             "type": "circle", "xref": "x", "yref": "y",
             "x0": -1.0, "x1": 1.0, "y0": -1.0, "y1": 1.0,
@@ -747,8 +740,7 @@ def update_all(fam, ftype, order, domain, c1, c2,
         fig_pz["layout"]["shapes"].append(shape_circle_fill)
         fig_pz["layout"]["shapes"].append(shape_circle_border)
 
-    # zeros → draggable circles
-    idx = 1 if domain == "analog" else 2
+    idx_start = 1 if domain == "analog" else 2
     for zidx, z_ in enumerate(old_zeros):
         zx = float(z_.real)
         zy = float(z_.imag)
@@ -760,9 +752,8 @@ def update_all(fam, ftype, order, domain, c1, c2,
             "fillcolor": "rgba(0,0,0,0)"
         }
         fig_pz["layout"]["shapes"].append(shape_zero)
-        idx += 1
+        idx_start += 1
 
-    # poles → draggable squares (rect)
     for pidx, p_ in enumerate(old_poles):
         px = float(p_.real)
         py = float(p_.imag)
@@ -775,9 +766,8 @@ def update_all(fam, ftype, order, domain, c1, c2,
             "fillcolor": "rgba(0,0,0,0)"
         }
         fig_pz["layout"]["shapes"].append(shape_pole)
-        idx += 1
+        idx_start += 1
 
-    # Center axes so (0,0) is in the middle
     all_x = [z.real for z in old_zeros] + [p.real for p in old_poles]
     all_y = [z.imag for z in old_zeros] + [p.imag for p in old_poles]
     if not all_x and not all_y:
@@ -788,16 +778,15 @@ def update_all(fam, ftype, order, domain, c1, c2,
     fig_pz["layout"]["xaxis"]["range"] = [-ax_lim, ax_lim]
     fig_pz["layout"]["yaxis"]["range"] = [-ax_lim, ax_lim]
 
-    # Prepare updated store
     new_store = {
         "poles": [[p.real, p.imag] for p in old_poles],
         "zeros": [[z.real, z.imag] for z in old_zeros],
         "gain": old_gain
     }
 
-    fig_pz     = sanitize_json(fig_pz)
-    bode_fig   = sanitize_json(bode_fig)
-    impulse_fig= sanitize_json(impulse_fig)
+    fig_pz      = sanitize_json(fig_pz)
+    bode_fig    = sanitize_json(bode_fig)
+    impulse_fig = sanitize_json(impulse_fig)
 
     return new_store, shapes_meta_new, fig_pz, bode_fig, impulse_fig
 
