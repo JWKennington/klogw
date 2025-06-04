@@ -1,15 +1,23 @@
 #!/usr/bin/env python
 """
-psd_mismatch_demo_updated2.py
+psd_mismatch_demo_v3.py
 
-Demonstration of first- and second-order timing and phase biases due to PSD whitening mismatch.
-This updated version fixes the interpolation lengths for H0_fd vs. freqs_fd.
+ – Demonstration of first‐ and second‐order timing/phase bias purely from
+  PSD‐whitening mismatch (no mass mismatches).
+
+ – “Single example” shows raw vs. ∆t₁ vs. ∆t₁+∆t₂ on one injection.
+
+ – “Multiple injections” now hold (m₁=30,M⊙, m₂=30,M⊙) fixed, but randomize
+  t_true, phi_true.  This forces the matched filter to see a *perfect‐match*
+  waveform (aside from PSD drift), so the only shift in t̂c,phîc is from the
+  PSD mismatch.  That is what our analytic ∆t₁/∆t₂/∆phi₁/∆phi₂ formulas were
+  supposed to predict.
 
 Dependencies:
-    - numpy
-    - scipy
-    - matplotlib
-    - lalsuite (lal, lalsimulation)
+  • numpy
+  • scipy
+  • matplotlib
+  • lalsuite  (lal, lalsimulation)
 """
 
 import numpy as np
@@ -19,92 +27,97 @@ import lal
 import lalsimulation as lalsim
 
 # =============================================================================
-# Parameters and PSD definitions
+# Global parameters and PSD definitions
 # =============================================================================
 
-fs = 4096          # Sampling rate (Hz)
-duration = 20.0     # Duration of time series (seconds)
+fs = 4096.0         # sampling rate [Hz]
+duration = 20.0     # time‐series length [s]
 N = int(fs * duration)
 dt = 1.0 / fs
 df = 1.0 / duration
-freqs = np.fft.rfftfreq(N, d=dt)  # Length N/2 + 1
+freqs = np.fft.rfftfreq(N, d=dt)  # length = N/2 + 1
 
 def psd_aLIGO(f):
-    """aLIGO Zero Det, High Power design PSD (one-sided)."""
+    """One‐sided aLIGO Zero‐Det, High‐Power design PSD."""
     return lalsim.SimNoisePSDaLIGOZeroDetHighPower(f)
 
+# build PSD1 and PSD2 arrays
 PSD1 = np.array([psd_aLIGO(f) for f in freqs])
-perturbation = 0.1 * np.exp(-0.5 * ((freqs - 150.0) / 50.0)**2)
-PSD2 = PSD1 * (1.0 + perturbation)
-# 1) First, replace any NaNs with +∞
+# perturbation = 0.5 * np.exp(-0.5 * ((freqs - 150.0) / 50.0)**2)
+# random perturbations at every frequency, uniformly distributed
+perturbation = np.random.uniform(-1, 1, size=PSD1.shape)
+# Smooth the perturbation a bit to avoid large jumps
+perturbation = np.convolve(perturbation, np.ones(10)/10, mode='same')
+PSD2 = PSD1 * (1.0 + 0.1 * perturbation)
+
+# replace any NaN or ≤0 by +∞ (especially at f=0)
 PSD1[np.isnan(PSD1)] = np.inf
 PSD2[np.isnan(PSD2)] = np.inf
-
-# 2) Then replace any zero or negative (if they ever appear) with +∞
-PSD1[PSD1 <= 0] = np.inf
-PSD2[PSD2 <= 0] = np.inf
+PSD1[PSD1 <= 0.0] = np.inf
+PSD2[PSD2 <= 0.0] = np.inf
 
 # =============================================================================
-# Minimum-phase filter computation
+# Build minimum‐phase phi_mp(f) from PSD2
 # =============================================================================
 
 def compute_minimum_phase_phi(psd, freqs):
     """
-    Build a minimum‐phase whitening phase phi_mp(f) from a one‐sided PSD psd[f].
-    We will explicitly set the DC bin (f=0) to match the next nonzero bin,
-    so that logA_pos[0] is finite.
+    Build the minimum‐phase whitening phase phi_mp(f) from a one‐sided PSD array psd[freqs].
+    We force psd2[0] = psd2[1] so that log(psd2) is finite at DC.
     """
     M = len(freqs)
-
-    # 1) Copy PSD and replace f=0 with PSD[1] so log is finite.
+    # copy PSD, set f=0 to PSD[f=1], so log is finite
     psd2 = psd.copy()
-    psd2[0] = psd2[1]   # “duplicate” the f>0 value into the DC slot.
-    # (We already made sure psd2[0] = ∞ was set above, so now it becomes a large finite.)
+    psd2[0] = psd2[1]
 
-    # 2) Now logA_pos is finite everywhere:
-    logA_pos = -0.5 * np.log(psd2)   # no -∞ anywhere now, because psd2[0] = psd2[1] < ∞
+    # now logA_pos = -½ log(psd2) is finite everywhere
+    logA_pos = -0.5 * np.log(psd2)
 
-    # 3) Mirror around Nyquist to build the full (length N) log spectrum:
+    # form full length‐N log spectrum (Hermitian symmetric)
     logA_full = np.zeros(N, dtype=np.float64)
     logA_full[:M] = logA_pos
     logA_full[M:] = logA_pos[-2:0:-1]
 
-    # 4) Compute real cepstrum:
+    # real cepstrum
     cepstrum = np.fft.ifft(logA_full).real
 
-    # 5) Build the minimum‐phase cepstrum:
+    # build min‐phase cepstrum: index0 stays, indices 1..(N/2−1) doubled,
+    # index N/2 (if even) copied unmodified
     minphase_cepstrum = np.zeros_like(cepstrum)
     minphase_cepstrum[0] = cepstrum[0]
     minphase_cepstrum[1 : N // 2] = 2.0 * cepstrum[1 : N // 2]
-    if N % 2 == 0:
+    if (N % 2) == 0:
         minphase_cepstrum[N // 2] = cepstrum[N // 2]
 
-    # 6) FFT back to get the full complex log‐spectrum:
+    # back to log‐spectrum
     logMin_full = np.fft.fft(minphase_cepstrum)
 
-    # 7) Extract φ_mp(f) = arg{…} on positive freqs:
+    # phi_mp(f) = arg of positive half
     phi_mp = np.angle(logMin_full[:M])
     return phi_mp
 
 phi_mp = compute_minimum_phase_phi(PSD2, freqs)
 
-# =============================================================================
-# Whitening filters
-# =============================================================================
-
-W1 = 1.0 / np.sqrt(PSD1)
-W2 = (1.0 / np.sqrt(PSD2)) * np.exp(1j * phi_mp)
+# whitening filters:
+W1 = 1.0 / np.sqrt(PSD1)                # linear‐phase (zero‐phase) template‐whitening
+W2 = (1.0 / np.sqrt(PSD2)) * np.exp(1j * phi_mp)  # minimum‐phase data‐whitening
 
 # =============================================================================
-# Generate frequency-domain Inspiral waveform
+# Generate a frequency‐domain TaylorF2 inspiral H0(f) for (m₁,m₂)=30,30 M⊙
 # =============================================================================
 
 def generate_fd_waveform(f_min, f_max, df, m1, m2, distance_mpc):
+    """
+    Return (freqs_in, H0) for TaylorF2 inspiral: m1,m2 in M⊙, distance in Mpc.
+    H0 is a complex array on [f_min : f_max] spaced by df.
+    """
     lal_msun = lal.MSUN_SI
     m1_SI = m1 * lal_msun
     m2_SI = m2 * lal_msun
+
     freqs_in = np.arange(f_min, f_max + df, df)
     dist_SI = distance_mpc * 1e6 * lal.PC_SI
+
     spin1x = spin1y = spin1z = 0.0
     spin2x = spin2y = spin2z = 0.0
     eccentricity = 0.0
@@ -126,6 +139,7 @@ def generate_fd_waveform(f_min, f_max, df, m1, m2, distance_mpc):
         lalsim.TaylorF2
     )
 
+    # if a list is returned, take the first (h+)
     if isinstance(Hf_raw, (list, tuple)):
         Hf_series = Hf_raw[0]
     else:
@@ -136,38 +150,82 @@ def generate_fd_waveform(f_min, f_max, df, m1, m2, distance_mpc):
     for idx in range(length):
         comp = Hf_series.data.data[idx]
         H0[idx] = complex(comp.real, comp.imag)
-
     return freqs_in, H0
 
-m1, m2 = 30.0, 30.0
-distance_mpc = 500.0
+# “base” masses and distance (we will never change these in the injections)
+m1_base, m2_base = 30.0, 30.0
+distance_base = 500.0  # Mpc
+
 f_min = freqs[1]
 f_max = freqs[-1]
-freqs_fd, H0_fd = generate_fd_waveform(f_min, f_max, df, m1, m2, distance_mpc)
+freqs_fd, H0_fd = generate_fd_waveform(f_min, f_max, df, m1_base, m2_base, distance_base)
 
-# =============================================================================
-# Interpolate H0_fd onto full freqs grid
-# =============================================================================
-
-# freqs_fd length is len(H0_fd)-1, because H0_fd includes DC at index 0.
-# Drop H0_fd[0] to align lengths.
+# interpolate H0_fd onto our full “freqs” grid
 H0 = np.zeros_like(freqs, dtype=complex)
-H0[1:] = np.interp(freqs[1:], freqs_fd, H0_fd[1:], left=0, right=0)
+H0[1:] = np.interp(freqs[1:], freqs_fd, H0_fd[1:], left=0.0, right=0.0)
 H0[0] = 0.0
 
 # =============================================================================
-# Whitening and inverse FFT
+# Analytic correction formulas (first & second order)
 # =============================================================================
 
-H1 = H0 * W1
-h1 = np.fft.irfft(H1, n=N)
-X2 = H0 * W2
-x2 = np.fft.irfft(X2, n=N)
+def compute_first_order_corrections(H0, PSD2, phi_mp, freqs):
+    """
+    delta_t₁ = [∫ f |H0|²/PSD2 · phi_mp df] / [2π ∫ f² |H0|²/PSD2 df]
+    delta_phi₁ = [∫ |H0|²/PSD2 · phi_mp df] / [∫ |H0|²/PSD2 df]
+    """
+    Wf = (np.abs(H0)**2) / PSD2
+    fpos = freqs[1:]
+    Wfpos = Wf[1:]
+    Phi_pos = phi_mp[1:]
+
+    num_t = np.trapz(fpos * Wfpos * Phi_pos, x=fpos)
+    den_t = 2.0 * np.pi * np.trapz(fpos**2 * Wfpos, x=fpos)
+    Delta_t1 = num_t / den_t
+
+    num_phi = np.trapz(Wfpos * Phi_pos, x=fpos)
+    den_phi = np.trapz(Wfpos, x=fpos)
+    Delta_phi1 = num_phi / den_phi
+
+    return Delta_t1, Delta_phi1
+
+def compute_second_order_corrections(H0, PSD2, phi_mp, freqs, delta_t1, delta_phi1):
+    """
+    Approximate leading second‐order pieces (phi_mp²‐terms) for delta_t₂, delta_phi₂:
+      delta_t₂ ≈ − [ ∫ f² W(f) phi_mp² df ] / [ (2π)² ∫ f² W(f) df ]
+      delta_phi₂ ≈ − [ ∫ W(f) phi_mp² df ] / [ 2 ∫ W(f) df ]
+    (Higher‐order mixed terms in delta_t1,delta_phi1 exist but are smaller.)
+    """
+    Wf = (np.abs(H0)**2) / PSD2
+    fpos = freqs[1:]
+    Wfpos = Wf[1:]
+    Phi_pos = phi_mp[1:]
+
+    num2_t = np.trapz((fpos**2) * Wfpos * (Phi_pos**2), x=fpos)
+    den2_t = (2.0 * np.pi)**2 * np.trapz((fpos**2) * Wfpos, x=fpos)
+    delta_t2 = - num2_t / den2_t
+
+    num2_phi = np.trapz(Wfpos * (Phi_pos**2), x=fpos)
+    den2_phi = 2.0 * np.trapz(Wfpos, x=fpos)
+    delta_phi2 = - num2_phi / den2_phi
+
+    return delta_t2, delta_phi2
+
+# compute corrections for the “base” 30+30 M⊙ waveform:
+delta_t1_base, delta_phi1_base = compute_first_order_corrections(H0, PSD2, phi_mp, freqs)
+delta_t2_base, delta_phi2_base = compute_second_order_corrections(H0, PSD2, phi_mp, freqs, delta_t1_base, delta_phi1_base)
 
 # =============================================================================
-# Matched filtering
+# SINGLE EXAMPLE: build one injection at (t_true=0, phi_true=0) just to show vertical lines
 # =============================================================================
 
+# whiten template & data for base waveform (no time/phase shift)
+H1_base = H0 * W1
+h1_base = np.fft.irfft(H1_base, n=N)
+X2_base = H0 * W2
+x2_base = np.fft.irfft(X2_base, n=N)
+
+# matched‐filter in time domain
 def match_filter_time_series(h1, x2):
     H1_t = np.fft.rfft(h1, n=N)
     X2_t = np.fft.rfft(x2, n=N)
@@ -178,139 +236,183 @@ def match_filter_time_series(h1, x2):
     tc = np.fft.fftshift(tc)
     return tc, z_t
 
-tc, z_t = match_filter_time_series(h1, x2)
-idx_peak = np.argmax(np.abs(z_t))
-t_hat_raw = tc[idx_peak] % duration
-phi_hat_raw = np.angle(z_t[idx_peak])
+tc_base, z_t_base = match_filter_time_series(h1_base, x2_base)
+idx_peak_base = np.argmax(np.abs(z_t_base))
+t_hat_raw_base = tc_base[idx_peak_base] % duration
+phi_hat_raw_base = np.angle(z_t_base[idx_peak_base])
+
+# apply corrections to that one peak
+t_hat_corr1_base = (t_hat_raw_base - delta_t1_base) % duration
+t_hat_corr12_base = (t_hat_raw_base - (delta_t1_base + delta_t2_base)) % duration
+
+phi_hat_corr1_base = (phi_hat_raw_base - delta_phi1_base) % (2.0 * np.pi)
+phi_hat_corr12_base = (phi_hat_raw_base - (delta_phi1_base + delta_phi2_base)) % (2.0 * np.pi)
 
 # =============================================================================
-# Analytic first-order corrections
-# =============================================================================
-
-Wf = (np.abs(H0)**2) / PSD2
-fpos = freqs[1:]
-Wfpos = Wf[1:]
-Phi = phi_mp
-Phi_pos = Phi[1:]
-
-num_t = np.trapezoid(fpos * Wfpos * Phi_pos, x=fpos)
-den_t = 2 * np.pi * np.trapezoid(fpos**2 * Wfpos, x=fpos)
-Delta_t1 = num_t / den_t
-
-num_phi = np.trapezoid(Wfpos * Phi_pos, x=fpos)
-den_phi = np.trapezoid(Wfpos, x=fpos)
-Delta_phi1 = num_phi / den_phi
-
-# =============================================================================
-# Plotting single example
+# PLOT: single‐example matched‐filter output (vertical lines)
 # =============================================================================
 
 plt.figure(figsize=(10, 8))
+
 plt.subplot(3, 1, 1)
-plt.loglog(freqs[1:], PSD1[1:], label='PSD1 (linear-phase)')
-plt.loglog(freqs[1:], PSD2[1:], label='PSD2 (min-phase)')
+plt.loglog(freqs[1:], PSD1[1:], label='PSD1 (linear‐phase)')
+plt.loglog(freqs[1:], PSD2[1:], label='PSD2 (min‐phase)')
 plt.xlim(10, fs/2)
-plt.xlabel('Frequency [Hz]')
+plt.xlabel('frequency [Hz]')
 plt.ylabel('PSD [1/Hz]')
 plt.legend()
-plt.title('PSD1 vs PSD2')
+plt.title('PSD1 vs. PSD2')
 
 plt.subplot(3, 1, 2)
 plt.plot(freqs[1:], phi_mp[1:], 'g-')
 plt.xlim(10, fs/2)
-plt.xlabel('Frequency [Hz]')
+plt.xlabel('frequency [Hz]')
 plt.ylabel(r'$\phi_{\rm mp}(f)$ [rad]')
-plt.title('Minimum-Phase Filter Phase Difference')
+plt.title('Minimum‐Phase Filter Phase Difference')
 
 plt.subplot(3, 1, 3)
-t = np.linspace(0, duration, N, endpoint=False)
-center = N // 2
+t_arr = np.linspace(0, duration, N, endpoint=False)
+center = N//2
 window = 256
-plt.plot(t[center-window:center+window], h1[center-window:center+window], 'b-', label='Whitened template')
-plt.plot(t[center-window:center+window], x2[center-window:center+window], 'r-', label='Whitened data', alpha=0.7)
-plt.xlabel('Time [s]')
-plt.ylabel('Strain (arb)')
-plt.title('Zoomed Whitened Template vs Whitened Data')
+plt.plot(
+    t_arr[center-window : center+window],
+    h1_base[center-window : center+window],
+    'b-', label='whitened template'
+)
+plt.plot(
+    t_arr[center-window : center+window],
+    x2_base[center-window : center+window],
+    'r-', label='whitened data',
+    alpha=0.7
+)
+plt.xlabel('time [s]')
+plt.ylabel('strain (arb)')
+plt.title('Zoomed Whitened Template vs. Whitened Data')
 plt.legend()
 plt.tight_layout()
 plt.show()
 
-plt.figure(figsize=(6, 4))
-plt.plot(tc, np.abs(z_t), 'k-')
-plt.axvline(t_hat_raw, color='r', linestyle='--', label=f'Raw $t_{{\\mathrm{{hat}}}}$ = {t_hat_raw:.4f}s')
+plt.figure(figsize=(6,4))
+plt.plot(tc_base, np.abs(z_t_base), 'k-')
+_vline_min = np.min(np.abs(z_t_base))
+_vline_max = np.max(np.abs(z_t_base))
+plt.axvline(
+    t_hat_raw_base,
+    ymin=_vline_min, ymax=_vline_max,
+    color='r',
+    linestyle='--',
+    label=f'raw $t_{{hat}}$ = {t_hat_raw_base:.4f}s',
+)
+plt.axvline(t_hat_corr1_base,
+            ymin=_vline_min, ymax=_vline_max,
+            color='b', linestyle='-.', label=f'1st‐order corr = {t_hat_corr1_base:.4f}s')
+plt.axvline(t_hat_corr12_base,
+            ymin=_vline_min, ymax=_vline_max,
+            color='m', linestyle=':',  label=f'1+2nd‐order corr = {t_hat_corr12_base:.4f}s')
 plt.xlabel('$t_c$ [s]')
 plt.ylabel(r'$|Z(t_c)|$')
-plt.title('Matched-Filter Output')
+plt.title('Matched‐Filter Output: Single Example')
 plt.legend()
 plt.tight_layout()
 plt.show()
 
 # =============================================================================
-# Multiple injections demonstration
+# MULTIPLE INJECTIONS (fixed 30+30M⊙) → scatter raw vs. corrected t̂c, phîc
 # =============================================================================
 
 n_injections = 500
-t_true_list = []
-t_hat_list = []
-t_hat_corr_list = []
-phi_true_list = []
-phi_hat_list = []
-phi_hat_corr_list = []
+t_true_list       = []
+t_hat_raw_list    = []
+t_hat_corr1_list  = []
+t_hat_corr12_list = []
+phi_true_list       = []
+phi_hat_raw_list    = []
+phi_hat_corr1_list  = []
+phi_hat_corr12_list = []
 
 for _ in range(n_injections):
-    t_true = np.random.uniform(0.3, 1.7)
-    phi_true = np.random.uniform(0, 2 * np.pi)
+    # choose random true coalescence time and phase
+    t_true = np.random.uniform(0.3, duration - 0.3)
+    phi_true = np.random.uniform(0.0, 2.0 * np.pi)
 
-    phase_shift = np.exp(-2j * np.pi * freqs * t_true)
-    H_sig = H0 * np.exp(1j * phi_true) * phase_shift
+    # use EXACTLY the same base H0(f) → template
+    H0_i = H0.copy()  # same 30+30M⊙ waveform
 
-    X2_i = H_sig * W2
-    x2_i = np.fft.irfft(X2_i, n=N)
+    # compute that waveform’s delta_t₁, delta_phi₁, delta_t₂, delta_phi₂ (they are actually identical to base)
+    Dt1_i, Dphi1_i = delta_t1_base, delta_phi1_base
+    Dt2_i, Dphi2_i = delta_t2_base, delta_phi2_base
 
-    H1_i = H0 * W1
+    # whitened template (in time) for injection:
+    H1_i = H0_i * W1
     h1_i = np.fft.irfft(H1_i, n=N)
 
+    # make the “injection in data”: shift a copy of H0_i by (t_true, phi_true)
+    phase_shift = np.exp(-2j * np.pi * freqs * t_true)
+    Hsig_i = H0_i * np.exp(1j * phi_true) * phase_shift
+    X2_i = Hsig_i * W2
+    x2_i = np.fft.irfft(X2_i, n=N)
+
+    # matched filter between h1_i and x2_i
     tc_i, z_t_i = match_filter_time_series(h1_i, x2_i)
     idx_peak_i = np.argmax(np.abs(z_t_i))
-    t_hat = tc_i[idx_peak_i] % duration
-    phi_hat = np.angle(z_t_i[idx_peak_i])
+    t_hat    = (tc_i[idx_peak_i] ) % duration
+    phi_hat    = np.angle(z_t_i[idx_peak_i])
 
-    t_hat_corr = (t_hat - Delta_t1) % duration
-    phi_hat_corr = (phi_hat - Delta_phi1) % (2 * np.pi)
+    # apply corrections
+    t_hat_corr1  = (t_hat - Dt1_i)        % duration
+    t_hat_corr12 = (t_hat - (Dt1_i + Dt2_i)) % duration
 
+    phi_hat_corr1  = (phi_hat - Dphi1_i)        % (2.0*np.pi)
+    phi_hat_corr12 = (phi_hat - (Dphi1_i + Dphi2_i)) % (2.0*np.pi)
+
+    # store
     t_true_list.append(t_true)
-    t_hat_list.append(t_hat)
-    t_hat_corr_list.append(t_hat_corr)
+    t_hat_raw_list.append(t_hat)
+    t_hat_corr1_list.append(t_hat_corr1)
+    t_hat_corr12_list.append(t_hat_corr12)
+
     phi_true_list.append(phi_true)
-    phi_hat_list.append(phi_hat)
-    phi_hat_corr_list.append(phi_hat_corr)
+    phi_hat_raw_list.append(phi_hat)
+    phi_hat_corr1_list.append(phi_hat_corr1)
+    phi_hat_corr12_list.append(phi_hat_corr12)
 
-t_true_arr = np.array(t_true_list)
-t_hat_arr = np.array(t_hat_list)
-t_hat_corr_arr = np.array(t_hat_corr_list)
-phi_true_arr = np.array(phi_true_list)
-phi_hat_arr = np.array(phi_hat_list)
-phi_hat_corr_arr = np.array(phi_hat_corr_list)
+# convert to arrays
+t_true_arr       = np.array(t_true_list)
+t_hat_raw_arr    = np.array(t_hat_raw_list)
+t_hat_corr1_arr  = np.array(t_hat_corr1_list)
+t_hat_corr12_arr = np.array(t_hat_corr12_list)
 
-plt.figure(figsize=(10, 4))
-plt.subplot(1, 2, 1)
-plt.scatter(t_true_arr, t_hat_arr, color='r', alpha=0.7, label='Raw $t_{\\mathrm{hat}}$')
-plt.scatter(t_true_arr, t_hat_corr_arr, color='b', alpha=0.7, label='Corrected $t_{\\mathrm{hat}}$')
-plt.plot([0, 2], [0, 2], 'k--', label='Ideal')
+phi_true_arr       = np.array(phi_true_list)
+phi_hat_raw_arr    = np.array(phi_hat_raw_list)
+phi_hat_corr1_arr  = np.array(phi_hat_corr1_list)
+phi_hat_corr12_arr = np.array(phi_hat_corr12_list)
+
+# =============================================================================
+# Plot scatter: raw vs. corrected
+# =============================================================================
+
+plt.figure(figsize=(12,5))
+
+plt.subplot(1,2,1)
+plt.scatter(t_true_arr,   t_hat_raw_arr,    color='red',   alpha=0.5, label='Raw  $t_{hat}$')
+plt.scatter(t_true_arr,   t_hat_corr1_arr,  color='blue',  alpha=0.5, label='1st‐order corr')
+plt.scatter(t_true_arr,   t_hat_corr12_arr, color='magenta',alpha=0.5, label='1+2nd‐order corr')
+plt.plot([0, duration],[0, duration],'k--', label='Ideal')
 plt.xlabel('True $t_c$ [s]')
 plt.ylabel('Estimated $t_c$ [s]')
-plt.title('Coalescence Time: Raw vs. Corrected')
+plt.title('Coalescence Time: Raw vs. Corrections')
 plt.legend()
-plt.xlim(0, 2)
-plt.ylim(0, 2)
+plt.xlim(0, duration)
+plt.ylim(0, duration)
 
-plt.subplot(1, 2, 2)
-plt.scatter(phi_true_arr, phi_hat_arr, color='r', alpha=0.7, label='Raw $\\phi_{\\mathrm{hat}}$')
-plt.scatter(phi_true_arr, phi_hat_corr_arr, color='b', alpha=0.7, label='Corrected $\\phi_{\\mathrm{hat}}$')
-plt.plot([0, 2*np.pi], [0, 2*np.pi], 'k--', label='Ideal')
-plt.xlabel('True $\\phi_c$ [rad]')
-plt.ylabel('Estimated $\\phi_c$ [rad]')
-plt.title('Coalescence Phase: Raw vs. Corrected')
+plt.subplot(1,2,2)
+plt.scatter(phi_true_arr,    phi_hat_raw_arr,    color='red',   alpha=0.5, label='Raw  $phi_{hat}$')
+plt.scatter(phi_true_arr,    phi_hat_corr1_arr,  color='blue',  alpha=0.5, label='1st‐order corr')
+plt.scatter(phi_true_arr,    phi_hat_corr12_arr, color='magenta',alpha=0.5, label='1+2nd‐order corr')
+plt.plot([0,2*np.pi],[0,2*np.pi],'k--', label='Ideal')
+plt.xlabel('True $phi_c$ [rad]')
+plt.ylabel('Estimated $phi_c$ [rad]')
+plt.title('Coalescence Phase: Raw vs. Corrections')
 plt.legend()
 plt.xlim(0, 2*np.pi)
 plt.ylim(0, 2*np.pi)
