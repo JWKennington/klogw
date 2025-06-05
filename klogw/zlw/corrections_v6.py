@@ -42,9 +42,9 @@ def psd_aLIGO(f):
 
 # Build PSD1 (for template whitening) and PSD2 (for data whitening):
 PSD1 = np.array([psd_aLIGO(f) for f in freqs])
-# perturbation = 0.1 * np.exp(-0.5 * ((freqs - 150.0) / 50.0)**2)
+perturbation = 1.0 * np.exp(-0.5 * ((freqs - 200.0) / 50.0)**2)
 # Uniform perturbations beween -1 and 1
-perturbation = np.random.uniform(-1.0, 1.0, size=len(freqs))
+# perturbation = np.random.uniform(-1.0, 1.0, size=len(freqs))
 PSD2 = PSD1 * (1.0 + 0.3 * perturbation)
 
 # Force any NaN or ≤0 (especially at f=0) → +∞
@@ -219,9 +219,7 @@ deltat2_base, deltaphi2_base = compute_second_order_corrections(
 
 # Build “whitened template” time series (no shift = t_true=0, phi_true=0)
 H1_base = H0 * W1
-h1_base = np.fft.irfft(H1_base, n=N)
-# <<<--- IMPORTANT: roll so that index 0 → index N//2
-h1_base_centered = np.roll(h1_base, N // 2)
+h1_base = np.fft.ifft(H1_base, n=N)
 
 # Build “whitened data” time series (also no shift)
 X2_base = H0 * W2
@@ -230,33 +228,40 @@ x2_base = np.fft.irfft(X2_base, n=N)
 
 def match_filter_time_series(h1, x2):
     """
-    Compute Z(t_c) = ∫ h1(τ) · x2(τ + t_c) dτ via FFT convolution,
-    then do an fftshift so that “zero‐lag” is at array index N//2.
+    Compute the complex matched‐filter time‐series Z(t_c) = ∫ h1(τ) · x2(τ + t_c) dτ,
+    keeping its full complex output so that arg(Z) makes sense.
 
+    Steps:
+      1) Compute H1_full = FFT[h1(t)] as length‐N complex array.
+      2) Compute X2_full = FFT[x2(t)] as length‐N complex array.
+      3) corr_full = conj(H1_full) * X2_full  (elementwise, all N bins).
+      4) z_unnorm_complex = IFFT[corr_full]   (complex length‐N).
+      5) z_t_complex_shifted = fftshift(z_unnorm_complex) so that zero‐lag sits at index N//2.
+      6) Build a real “lag” axis:  tc[i] = (i - N//2) * dt,  i=0…N−1.
     Returns:
-      • tc:  length‐N array of time lags in seconds, from  −(N/2)*dt  up to  +((N/2)−1)*dt
-      • z_t: length‐N array of |Z(t_c)| (after fftshift), so that z_t[N//2] = Z(0).
+      • tc: length‐N float array of lags [−T/2, …, +T/2−dt]
+      • z_t_complex: length‐N complex array = <h1 | x2>(t_c).
     """
-    # 1) FFT of the template:
-    H1_t = np.fft.rfft(h1, n=N)
+    # 1) Full FFT of the real h1(t) → length‐N complex array
+    H1_full = np.fft.fft(h1, n=N)
 
-    # 2) FFT of the data:
-    X2_t = np.fft.rfft(x2, n=N)
+    # 2) Full FFT of the real x2(t) → length‐N complex array
+    X2_full = np.fft.fft(x2, n=N)
 
-    # 3) Multiply conj(H1) * X2:
-    corr_f = np.conj(H1_t) * X2_t
+    # 3) Multiply conj(H1_full) * X2_full at each of the N frequency bins
+    corr_full = np.conj(H1_full) * X2_full
 
-    # 4) IFFT → real cross‐correlation array of length N:
-    z_unnorm = np.fft.irfft(corr_f, n=N)
+    # 4) IFFT back to time domain, yielding a length‐N complex array
+    z_unnorm_complex = np.fft.ifft(corr_full, n=N)
 
-    # 5) fftshift → move “lag=0” to the midpoint:
-    z_t = np.fft.fftshift(z_unnorm)
+    # 5) Shift so that “zero‐lag” appears at index N//2
+    z_t_complex = np.fft.fftshift(z_unnorm_complex)
 
-    # 6) Build the time-lag axis:  index N//2 → lag = 0; index N//2+1 → +dt; etc.
-    idx = np.arange(N)              # 0,1,2,...,N−1
-    tc  = (idx - (N//2)) * dt       # e.g. idx=N//2 → tc=0; idx=N//2+1 → tc=+dt; idx=N//2-1→tc=−dt
+    # 6) Build the lag axis (in seconds) of length N:
+    idx = np.arange(N)                # 0,1,…,N−1
+    tc  = (idx - (N//2)) * dt         # e.g. idx=N//2 → tc=0, idx=N//2+1 → +dt, etc.
 
-    return tc, z_t
+    return tc, z_t_complex
 
 tc_base, z_t_base = match_filter_time_series(h1_base, x2_base)
 idx_peak_base   = np.argmax(np.abs(z_t_base))
@@ -332,127 +337,119 @@ plt.show()
 # 6) MULTIPLE INJECTIONS: vary only (t_true, phi_true); keep (m₁,m₂)=30+30 fixed
 # =============================================================================
 
-n_injections = 50
-t_true_list       = []
-t_hat_raw_list    = []
-t_hat_corr1_list  = []
-t_hat_corr12_list = []
-phi_true_list       = []
-phi_hat_raw_list    = []
-phi_hat_corr1_list  = []
-phi_hat_corr12_list = []
+n_injections = 500
+
+t_true_list        = []
+t_hat_raw_list     = []
+t_hat_corr1_list   = []
+t_hat_corr12_list  = []
+phi_true_list      = []
+phi_hat_raw_list   = []
+phi_hat_corr1_list = []
+phi_hat_corr12_list= []
 
 for i in range(n_injections):
-    # pick random coalescence time & phase
-    t_true = np.random.uniform(0.3, duration - 0.3)
+    # (1) Choose random coalescence time & phase
+    t_true   = np.random.uniform(0.3, duration - 0.3)
     phi_true = np.random.uniform(0.0, 2.0 * np.pi)
 
-    # Template is STILL H0(f) for (30+30)M⊙:
-    H0_i = H0.copy()
-
-    # The bias deltat₁, deltaphi₁, deltat₂, deltaphi₂ are the same as “base”
-    Dt1_i, Dphi1_i = deltat1_base, deltaphi1_base
-    Dt2_i, Dphi2_i = deltat2_base, deltaphi2_base
-
-    h1_i_centered = h1_base_centered
-    # build time‐domain whitened template:
-    H1_i = H0_i * W1
-    h1_i = np.fft.irfft(H1_i, n=N)
-
-    # build FD injection: H_sig(f) = H0_i(f) · e^{i phi_true} · e^{−2π i f t_true}
+    # (2) Build FD injection (one‐sided):
+    #     Hsig_i(f) = H0(f) ⋅ e^{i φ_true} ⋅ e^{-2π i f t_true}
     phase_shift = np.exp(-2j * np.pi * freqs * t_true)
-    Hsig_i = H0_i * np.exp(1j * phi_true) * phase_shift
+    Hsig_i      = H0 * np.exp(1j * phi_true) * phase_shift
 
-    # 1) Whitened, frequency‐domain data:
+    # ─────────────────────────────────────────────────────────────────────────
+    # REAL branch: whiten with PSD2 → IFFT to get x2_i(t), *do NOT roll*
+    # ─────────────────────────────────────────────────────────────────────────
     X2_i = Hsig_i * W2
+    x2_i = np.fft.irfft(X2_i, n=N)  # coalescence already sits at t_true
 
-    # 2) Inverse FFT → a real array of length N.
-    x2_i = np.fft.irfft(X2_i, n=N)
-
-    # 3) “Unwrap” the coalescence from index round(t_true/dt) → index 0:
-    idx_shift = int(np.round(t_true / dt))
-    x2_unwrapped = np.roll(x2_i, -idx_shift)
-
-    # 4) “Center” the coalescence (index 0 → index N//2):
-    x2_i_centered = np.roll(x2_unwrapped, N // 2)
-
-    # 5) Matched filter using the pre‐centered template and this centered data:
-    tc_i, z_t_i = match_filter_time_series(h1_base_centered, x2_i_centered)
-
-    # matched filter:
-    tc_i, z_t_i = match_filter_time_series(h1_i, x2_i)
-    idx_peak_i  = np.argmax(np.abs(z_t_i))
-    raw_lag_i   = tc_i[idx_peak_i]
-
-    # CONTROL by whitening data with W1:
-
-    # (a) build FD‐domain:  Hsig_i * W1
-    X2_i_ctrl = Hsig_i * W1
-
-    # (b) ifft → x2_ctrl_raw
-    x2_ctrl_raw = np.fft.irfft(X2_i_ctrl, n=N)
-
-    # (c) “Unwrap” that coalescence: from index round(t_true/dt) → index 0
-    x2_ctrl_unwrapped = np.roll(x2_ctrl_raw, -idx_shift)
-
-    # (d) Now “center” it: index 0 → index N//2
-    x2_i_ctrl_centered = np.roll(x2_ctrl_unwrapped, N // 2)
-
-    # (e) Finally, match‐filter against the centered template:
-    tc_i_ctrl, z_t_i_ctrl = match_filter_time_series(
-        h1_base_centered, x2_i_ctrl_centered
+    # (4d) Directly matched‐filter against the centered template:
+    tc_i, z_t_i_complex = match_filter_time_series(
+        h1_base,
+        x2_i
     )
-    idx_peak_i_ctrl = np.argmax(np.abs(z_t_i_ctrl))
-    raw_lag_i_ctrl = tc_i_ctrl[idx_peak_i_ctrl]
 
-    # (6) Now print/debug the first few injections to confirm
+    idx_peak_i = np.argmax(np.abs(z_t_i_complex))
+    raw_lag_i  = tc_i[idx_peak_i]            # ≈ +Δt₁  (because t_true was built into Hsig_i)
+    t_hat_i    = raw_lag_i % duration
+
+    # (4f) Extract complex z_peak, then its argument
+    z_peak_i  = z_t_i_complex[idx_peak_i]
+    phi_hat_i = np.angle(z_peak_i)  # now *nonzero*, tracks phi_true + Δφ₁
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # CONTROL branch: whiten with PSD1 → IFFT, *do NOT roll*
+    # ─────────────────────────────────────────────────────────────────────────
+    X2_i_ctrl    = Hsig_i * W1
+    x2_ctrl_raw  = np.fft.irfft(X2_i_ctrl, n=N)
+
+    tc_i_ctrl, z_t_i_ctrl_complex = match_filter_time_series(
+        h1_base,
+        x2_ctrl_raw
+    )
+    idx_peak_i_ctrl    = np.argmax(np.abs(z_t_i_ctrl_complex))
+    raw_lag_i_ctrl     = tc_i_ctrl[idx_peak_i_ctrl]
+    t_hat_i_ctrl       = raw_lag_i_ctrl % duration  # should be ≈ 0
+
+    z_peak_i_ctrl     = z_t_i_ctrl_complex[idx_peak_i_ctrl]
+    phi_hat_i_ctrl    = np.angle(z_peak_i_ctrl)     # should be ≈ 0
+
+    # (Optional) Print first few to confirm:
     if i < 3:
-        print(f" inj {i:2d}: t_true = {t_true:.4f} s, idx_shift = {idx_shift}")
-        print(f"    raw_lag REAL   = {raw_lag_i:.6f} s   (≈ Δt₁)")
-        print(f"    raw_lag CONTROL= {raw_lag_i_ctrl:.6f} s   (should be 0)")
-        print("    ——————————")
+        # First print the true and hat and control values
+        print(f"Injection {i}:")
+        print(f"  t_true = {t_true:.4f} s,  phi_true = {phi_true:.4f} rad")
+        print(f"  raw t_hat = {t_hat_i:.4f} s,  raw phi_hat = {phi_hat_i:.4f} rad")
+        print(f"  raw t_hat_ctrl = {t_hat_i_ctrl:.4f} s,  raw phi_hat_ctrl = {phi_hat_i_ctrl:.4f} rad")
+        print(f"  deltat₁ = {deltat1_base:.4f} s,  deltaphi₁ = {deltaphi1_base:.4f} rad")
+        print(f"  deltat₂ = {deltat2_base:.4f} s,  deltaphi₂ = {deltaphi2_base:.4f} rad")
+        print(f"  raw lag = {raw_lag_i:.4f} s,  ctrl lag = {raw_lag_i_ctrl:.4f} s")
 
-    # Plot first few injections:
-    if i < 5:
-        plt.figure(figsize=(10, 6))
-        plt.plot(tc_i, np.abs(z_t_i), 'k-')
-        plt.axvline(raw_lag_i,   color='r', linestyle='--',
-                    label=f'raw $t_{{hat}}$ = {raw_lag_i:.4f} s')
-        plt.axvline(raw_lag_i - Dt1_i, color='b', linestyle='-.',
-                    label=f'1st‐order corr = {(raw_lag_i - Dt1_i) % duration:.4f} s')
-        plt.axvline(raw_lag_i - (Dt1_i + Dt2_i), color='m', linestyle=':',
-                    label=f'1+2nd‐order corr = {(raw_lag_i - (Dt1_i + Dt2_i)) % duration:.4f} s')
-        plt.xlabel('$t_c$ [s]')
-        plt.ylabel(r'$|Z(t_c)|$')
-        # Zoom in near the peak:
-        plt.xlim(raw_lag_i - 1.0, raw_lag_i + 1.0)
 
-        plt.title(f'Matched‐Filter Output: Injection {i+1}')
+        plt.figure(figsize=(8, 4))
+        plt.plot(tc_i, np.abs(z_t_i_complex), "k-", label="Matched Filter Output")
+        plt.axvline(
+            raw_lag_i,
+            color="red",
+            linestyle="--",
+            label=f"raw $t_{{lag}}$ = {raw_lag_i:.4f} s",
+        )
+        plt.axvline(
+            raw_lag_i_ctrl,
+            color="blue",
+            linestyle="-.",
+            label=f"ctrl $t_{{lag}}$ = {raw_lag_i_ctrl:.4f} s",
+        )
+        plt.xlabel("$t_c$ [s]")
+        plt.ylabel(r"$|Z(t_c)|$")
+
+        # Center your zoom on raw_lag_i (which always lies in [-10,+10]):
+        plt.xlim(raw_lag_i - 0.1, raw_lag_i + 0.1)
+
+        plt.title(f"Matched Filter Output: Injection {i}")
         plt.legend()
         plt.tight_layout()
         plt.show()
 
-    # convert to physical t_hat:
-    t_hat = raw_lag_i % duration
-    phi_hat = np.angle(z_t_i[idx_peak_i])
+    # (7) Apply analytic corrections Δt₁, Δφ₁, Δt₂, Δφ₂
+    t_hat_corr1_i   = (t_hat_i - deltat1_base)                 % duration
+    t_hat_corr12_i  = (t_hat_i - (deltat1_base + deltat2_base)) % duration
 
-    # apply corrections:
-    t_hat_corr1  = (t_hat - Dt1_i)         % duration
-    t_hat_corr12 = (t_hat - (Dt1_i + Dt2_i)) % duration
+    phi_hat_corr1_i  = (phi_hat_i - deltaphi1_base)                 % (2*np.pi)
+    phi_hat_corr12_i = (phi_hat_i - (deltaphi1_base + deltaphi2_base)) % (2*np.pi)
 
-    phi_hat_corr1  = (phi_hat - Dphi1_i)         % (2.0 * np.pi)
-    phi_hat_corr12 = (phi_hat - (Dphi1_i + Dphi2_i)) % (2.0 * np.pi)
-
-    # store:
+    # (8) Store results
     t_true_list.append(t_true)
-    t_hat_raw_list.append(t_hat)
-    t_hat_corr1_list.append(t_hat_corr1)
-    t_hat_corr12_list.append(t_hat_corr12)
+    t_hat_raw_list.append(t_hat_i)
+    t_hat_corr1_list.append(t_hat_corr1_i)
+    t_hat_corr12_list.append(t_hat_corr12_i)
 
     phi_true_list.append(phi_true)
-    phi_hat_raw_list.append(phi_hat)
-    phi_hat_corr1_list.append(phi_hat_corr1)
-    phi_hat_corr12_list.append(phi_hat_corr12)
+    phi_hat_raw_list.append(phi_hat_i)
+    phi_hat_corr1_list.append(phi_hat_corr1_i)
+    phi_hat_corr12_list.append(phi_hat_corr12_i)
+
 
 # convert to arrays:
 t_true_arr       = np.array(t_true_list)
@@ -494,6 +491,122 @@ plt.title('Coalescence Phase: Raw vs. Corrections')
 plt.legend()
 plt.xlim(0, 2*np.pi)
 plt.ylim(0, 2*np.pi)
+
+plt.tight_layout()
+plt.show()
+
+# Timing arrays
+t_true_arr       = np.array(t_true_list)          # shape = (N_inj,)
+t_hat_raw_arr    = np.array(t_hat_raw_list)
+t_hat_corr1_arr  = np.array(t_hat_corr1_list)
+t_hat_corr12_arr = np.array(t_hat_corr12_list)
+
+# Phase arrays
+phi_true_arr       = np.array(phi_true_list)
+phi_hat_raw_arr    = np.array(phi_hat_raw_list)
+phi_hat_corr1_arr  = np.array(phi_hat_corr1_list)
+phi_hat_corr12_arr = np.array(phi_hat_corr12_list)
+
+# Sanity-check lengths
+assert (
+    t_true_arr.shape == t_hat_raw_arr.shape
+    == t_hat_corr1_arr.shape
+    == t_hat_corr12_arr.shape
+), "Timing arrays must all have the same length"
+assert (
+    phi_true_arr.shape == phi_hat_raw_arr.shape
+    == phi_hat_corr1_arr.shape
+    == phi_hat_corr12_arr.shape
+), "Phase arrays must all have the same length"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (B) Compute timing residuals, wrapped into [-T/2, +T/2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+T = duration  # total duration in seconds
+
+# Raw residuals: delta_raw = t_hat_raw - t_true, wrapped into [-T/2, +T/2)
+delta_raw = t_hat_raw_arr - t_true_arr
+raw_residuals = (delta_raw + 1.5 * T) % T - 0.5 * T
+
+# First-order corrected residuals: delta_corr1 = t_hat_corr1 - t_true
+delta_corr1 = t_hat_corr1_arr - t_true_arr
+corr1_residuals = (delta_corr1 + 1.5 * T) % T - 0.5 * T
+
+# First+Second-order corrected: delta_corr12 = t_hat_corr12 - t_true
+delta_corr12 = t_hat_corr12_arr - t_true_arr
+corr12_residuals = (delta_corr12 + 1.5 * T) % T - 0.5 * T
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (C) Compute phase residuals, wrapped into [-pi, +pi)
+# ─────────────────────────────────────────────────────────────────────────────
+
+phi_diff_raw    = np.angle(np.exp(1j * phi_hat_raw_arr)   / np.exp(1j * phi_true_arr))
+phi_diff_corr1  = np.angle(np.exp(1j * phi_hat_corr1_arr) / np.exp(1j * phi_true_arr))
+phi_diff_corr12 = np.angle(np.exp(1j * phi_hat_corr12_arr)/ np.exp(1j * phi_true_arr))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (D) Determine dynamic x-axis limits based on the data
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Timing: find the maximum absolute residual among all three sets
+max_t = np.max(np.abs(
+    np.concatenate([raw_residuals, corr1_residuals, corr12_residuals])
+))
+# Add a small margin, e.g. 10% larger
+t_lim = max_t * 1.1
+
+# Phase: find the maximum absolute phase residual
+max_phi = np.max(np.abs(
+    np.concatenate([phi_diff_raw, phi_diff_corr1, phi_diff_corr12])
+))
+# Add 10% margin
+phi_lim = max_phi * 1.1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (E) Plot overlaid histograms for timing and phase residuals
+# ─────────────────────────────────────────────────────────────────────────────
+
+plt.figure(figsize=(12, 5))
+
+# E1) Timing histogram (left panel)
+plt.subplot(1, 2, 1)
+
+# Create 100 bins spanning [-t_lim, +t_lim]
+bins_time = np.linspace(-t_lim, +t_lim, 100)
+
+plt.hist(raw_residuals,    bins=bins_time, color='red',     alpha=0.6, label='Raw')
+plt.hist(corr1_residuals,  bins=bins_time, color='blue',    alpha=0.6, label='First-order correction')
+plt.hist(corr12_residuals, bins=bins_time, color='magenta', alpha=0.6, label='First+Second-order correction')
+
+plt.axvline(0.0, color='black', linestyle='--', linewidth=1)
+plt.xlabel('Timing residual (t_hat - t_true) [s]')
+plt.ylabel('Number of injections')
+plt.title('Timing residuals: raw vs corrected')
+plt.legend()
+plt.xlim(-t_lim, +t_lim)
+
+
+# E2) Phase histogram (right panel)
+plt.subplot(1, 2, 2)
+
+# Create 100 bins spanning [-phi_lim, +phi_lim]
+bins_phase = np.linspace(-phi_lim, +phi_lim, 100)
+
+plt.hist(phi_diff_raw,    bins=bins_phase, color='orange', alpha=0.6, label='Raw')
+plt.hist(phi_diff_corr1,  bins=bins_phase, color='green',  alpha=0.6, label='First-order correction')
+plt.hist(phi_diff_corr12, bins=bins_phase, color='purple', alpha=0.6, label='First+Second-order correction')
+
+plt.axvline(0.0, color='black', linestyle='--', linewidth=1)
+plt.xlabel('Phase residual (phi_hat - phi_true) [rad]')
+plt.ylabel('Number of injections')
+plt.title('Phase residuals: raw vs corrected')
+plt.legend()
+plt.xlim(-phi_lim, +phi_lim)
 
 plt.tight_layout()
 plt.show()
