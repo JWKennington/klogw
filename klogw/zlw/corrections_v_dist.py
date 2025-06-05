@@ -62,7 +62,7 @@ TEMPLATE_M1_RANGE    = (10.0, 100.0)
 TEMPLATE_M2_RANGE    = (10.0, 100.0)
 INJ_MASS_OFFSET_STD  = 1.0       # ±1 M⊙ Gaussian scattering
 
-n_injections = 500
+n_injections = 5000
 
 PSD2_FIXED_KIND   = "gaussian"
 PSD2_FIXED_KWARGS = {"center":150.0, "width":50.0, "amplitude_ratio":0.3}
@@ -127,6 +127,10 @@ phi_true_list       = []
 phi_hat_raw_list    = []
 phi_hat_corr1_list  = []
 phi_hat_corr12_list = []
+
+m1_true_list = []
+m2_true_list = []
+pert_list = []
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -293,6 +297,10 @@ for i in range(n_injections):
     phi_hat_corr1_list.append(phi_hat_corr1)
     phi_hat_corr12_list.append(phi_hat_corr12)
 
+    m1_true_list.append(m1_template)
+    m2_true_list.append(m2_template)
+    pert_list.append(str(cfg))
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # (G) CONVERT LISTS TO ARRAYS & COMPUTE WRAPPED RESIDUALS
@@ -336,3 +344,24 @@ plot_residuals_scatter(
     phi_hat_corr12_arr,
     duration,
 )
+
+
+# Save data to a csv file for further analysis using pandas
+import pandas as pd
+data = {
+    "t_true": t_true_arr,
+    "t_hat_raw": t_hat_raw_arr,
+    "t_hat_corr1": t_hat_corr1_arr,
+    "t_hat_corr12": t_hat_corr12_arr,
+    "phi_true": phi_true_arr,
+    "phi_hat_raw": phi_hat_raw_arr,
+    "phi_hat_corr1": phi_hat_corr1_arr,
+    "phi_hat_corr12": phi_hat_corr12_arr,
+    "m1_true": m1_true_list,
+    "m2_true": m2_true_list,
+    "psd_perturbation": pert_list,
+}
+df = pd.DataFrame(data)
+df.to_csv("injection_results.csv", index=False)
+
+
