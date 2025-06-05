@@ -238,6 +238,10 @@ for i in range(n_injections):
     if ADD_PSD_SHAPED_NOISE:
         # (1) Build a fresh whitened‐noise realization of length N:
         noise_t_raw = make_whitened_noise(PSD2, dt)  # RMS matched‐filter = 1
+        # compute noise rms
+        noise_rms = np.sqrt(np.mean(noise_t_raw**2))
+        # Scale noise to a average unit amplitude
+        noise_t_raw /= noise_rms  # now RMS = 1.0
 
         # (2) Measure the noise‐free SNR of this injection:
         tc0, z0 = match_filter_time_series(h1, x2_clean, dt)
@@ -246,12 +250,13 @@ for i in range(n_injections):
         # (3) Choose a reasonable “target SNR” (so phases/times aren’t totally lost)
         SNR_target = 10.0
 
-        # (4) Compute how much to scale the noise so that
-        #     “injection + noise” peaks at ~ SNR_target:
-        alpha = snr0 / SNR_target
+        # (5) Scale the signal up to target snr
+        x2_clean *= SNR_target / snr0
 
-        # (5) Scale down the noise:
-        noise_t_scaled = noise_t_raw / alpha
+        # Scale noise to target amplitude fraction of the max signal amplitude
+        target_noise_amp_ratio = 0.1  # e.g. 10% of the max signal amplitude
+        max_amp = np.max(np.abs(x2_clean))
+        noise_t_scaled = noise_t_raw * (target_noise_amp_ratio * max_amp)
 
         # (6) Build the final noisy injection:
         x2_noisy = x2_clean + noise_t_scaled
