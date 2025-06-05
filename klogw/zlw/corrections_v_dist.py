@@ -291,6 +291,12 @@ for i in range(n_injections):
             f"  PSD perturbation  = {('varied' if VARY_PSD else 'fixed')}  →  dt1={dt1:.3e} s, dt2={dt2:.3e} s"
         )
         print(f"                    dphi1={dphi1:.3e} rad, dphi2={dphi2:.3e} rad")
+        # Also print the true and estimated times/phases next to each other:
+        print(f"  True time/phase   = ({t_true:.3f} s, {phi_true:.3f} rad)")
+        print(f"  Raw t_hat/phi_hat = ({t_hat:.3f} s, {phi_hat:.3f} rad)")
+        print(f"  Corr1 t_hat/phi_hat = ({t_hat_corr1:.3f} s, {phi_hat_corr1:.3f} rad)")
+        print(f"  Corr12 t_hat/phi_hat = ({t_hat_corr12:.3f} s, {phi_hat_corr12:.3f} rad)")
+
 
         # Plot the snr timeseries
         plt.figure(figsize=(10, 4))
