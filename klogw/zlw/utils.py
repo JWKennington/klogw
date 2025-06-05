@@ -293,32 +293,28 @@ def match_filter_time_series(h1_t, x2_t, dt):
 
 def make_injection_time_series(H0, W2, freqs, N, dt, t_true, phi_true):
     """
-    Build “centered” whitened‐data time series x2_centered(t), as complex.
+    Build a “clean” whitened‐injection time series x₂₍ₜ₎, as a real array:
 
-    Steps:
-      1) Construct the FD injection: H_sig(f) = H0(f)*exp(i φ_true)*exp(-2π i f t_true).
-      2) Whiten in FD:          X2_pos(f)   = H_sig(f)*W2(f)  (one-sided).
-      3) Mirror X2_pos → X2_full (length N) with Hermitian symmetry.
-      4) IFFT → x2_t (complex length-N time series).
+    Steps (exactly like v5):
+      1) H_sig(f) = H0(f)*exp(i φ_true)*exp(-2π i f t_true).     [ length M = N//2+1 ]
+      2) X2_pos  = H_sig(f) * W2(f)                                [ still length M ]
+      3) x2_t    = np.fft.irfft(X2_pos, n=N) → a real length‐N array.
+      4) Return that real array.
+
+    (We do *not* manually mirror to a length‐N spectrum here.  Instead we rely
+    on `irfft` to place the positive‐ and negative‐frequency halves correctly.)
     """
-    M = len(freqs)  # = N//2 + 1
-
-    # 1) frequency‐domain phase shift for coalescence at t_true
+    # (1) apply coalescence‐phase and time‐shift in frequency:
     phase_shift = np.exp(-2j * np.pi * freqs * t_true)
     Hsig_f = H0 * np.exp(1j * phi_true) * phase_shift
 
-    # 2) whiten by PSD2’s minimum‐phase filter
+    # (2) whiten by minimum‐phase filter W2:
     X2_pos = Hsig_f * W2
 
-    # 3) build the full length-N spectrum
-    X2_full = np.zeros(N, dtype=complex)
-    X2_full[:M] = X2_pos
-    X2_full[M:] = np.conj(X2_pos[-2:0:-1])
+    # (3) irfft → a length‐N real time series
+    x2_t = np.fft.irfft(X2_pos, n=N)
 
-    # 4) IFFT → full complex time series
-    x2_t = np.fft.ifft(X2_full)
-
-    return x2_t
+    return x2_t  # real
 
 
 # ──────────────────────────────────────────────────────────────────────────────
