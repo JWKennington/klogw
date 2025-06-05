@@ -70,9 +70,10 @@ def generate_colored_noise_from_lalsim(N, fs, psd_model='aLIGOZeroDetHighPower',
     ts = lal.CreateREAL8TimeSeries(
         "NoiseTS",  # Name
         0,  # GPS start time
+        0.0,  # start time offset (seconds)
         delta_t,  # deltaT (sampling interval)
-        N,  # number of points
         lal.DimensionlessUnit,  # sample units
+        N,  # number of samples
     )
 
     # Frequency-domain parameters for PSD

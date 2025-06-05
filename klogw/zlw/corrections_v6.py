@@ -42,10 +42,10 @@ def psd_aLIGO(f):
 
 # Build PSD1 (for template whitening) and PSD2 (for data whitening):
 PSD1 = np.array([psd_aLIGO(f) for f in freqs])
-perturbation = 1.0 * np.exp(-0.5 * ((freqs - 200.0) / 50.0)**2)
+# perturbation = 1.0 * np.exp(-0.5 * ((freqs - 200.0) / 50.0)**2)
 # Uniform perturbations beween -1 and 1
-# perturbation = np.random.uniform(-1.0, 1.0, size=len(freqs))
-PSD2 = PSD1 * (1.0 + 0.3 * perturbation)
+perturbation = np.random.uniform(-1.0, 1.0, size=len(freqs))
+PSD2 = PSD1 * (1.0 + 0.5 * perturbation)
 
 # Force any NaN or ≤0 (especially at f=0) → +∞
 PSD1[np.isnan(PSD1)] = np.inf
